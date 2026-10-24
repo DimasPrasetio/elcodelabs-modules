@@ -43,6 +43,10 @@ for (const { id, m } of modules) {
       if (!existsSync(join(ROOT, at, a.file))) problem(at, `port ${port.name}: adapter file ${a.file} missing`);
     }
   }
+  for (const p of m.permissions ?? []) {
+    if (!p.name?.startsWith(`${id}.`)) problem(at, `permission "${p.name}" must be named ${id}.<action>`);
+    if (!p.description) problem(at, `permission "${p.name}" needs a description`);
+  }
   const hasApi = Boolean(m.install?.api);
   if (hasApi !== Boolean(m.register?.go)) problem(at, "a module with api/ must have register.go, and only then");
   if (["fullstack", "web"].includes(m.kind) && !m.register?.web) problem(at, `a ${m.kind} module needs register.web`);
@@ -88,6 +92,7 @@ const catalog = {
     id: m.id, version: m.version, kind: m.kind, title: m.title, summary: m.summary,
     when_to_use: m.when_to_use, when_not_to_use: m.when_not_to_use, stacks: m.stacks ?? [],
     requires_kernel: m.requires_kernel, provides: m.provides ?? {},
+    permissions: (m.permissions ?? []).map((p) => p.name),
     ports: (m.ports ?? []).map((p) => ({ name: p.name, required: p.required, description: p.description, adapters: Object.keys(p.adapters ?? {}) })),
     ui: m.ui ?? [], owns_tables: m.owns_tables ?? [],
   })),
@@ -103,12 +108,12 @@ const md = [
   "",
   "## Modules",
   "",
-  "| Module | Kind | Version | What it does | Offers | Needs (ports) | Builds on |",
-  "|---|---|---|---|---|---|---|",
+  "| Module | Kind | Version | Kernel ≥ | What it does | Offers | Needs (ports) | Permissions | Builds on |",
+  "|---|---|---|---|---|---|---|---|---|",
   ...catalog.modules.map((m) => {
     const offers = [...(m.provides.contracts ?? []), ...(m.provides.kernel ?? []).map((k) => `kernel ${k}`)].join(", ") || "—";
     const needs = m.ports.map((p) => `${p.name}${p.required ? "" : " (optional)"}${p.adapters.length ? ` ← ${p.adapters.join(", ")}` : ""}`).join("; ") || "—";
-    return `| [${m.id}](modules/${m.id}/README.md) | ${m.kind} | ${m.version} | ${cell(m.summary)} | ${offers} | ${needs} | ${m.ui.join(", ") || "—"} |`;
+    return `| [${m.id}](modules/${m.id}/README.md) | ${m.kind} | ${m.version} | ${m.requires_kernel} | ${cell(m.summary)} | ${offers} | ${needs} | ${m.permissions.join(", ") || "—"} | ${m.ui.join(", ") || "—"} |`;
   }),
   "",
   "### When to use",

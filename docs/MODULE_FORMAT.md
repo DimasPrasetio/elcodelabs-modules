@@ -13,8 +13,10 @@ The format is JSON rather than YAML so the tooling stays dependency-free, like t
    needs from outside is a port in its own `ports/` (Go) or goes through `shared/` (web). Ports
    are connected in the project's composition root by adapters
    (`apps/api/internal/modules/adapter_<consumer>_<port>.go`).
-2. **Authentication is the kernel's `d.Auth`**, not a port: a module guards handlers with
-   `d.Auth.Require` and reads the user with `d.Auth.UserID`. The auth module fills the slot.
+2. **Authentication and authorization are the kernel's `d.Auth` and `d.Authz`**, not ports: a
+   module guards handlers with `d.Auth.Require` (signed in) or `d.Authz.Require("<id>.<action>")`
+   (permission), declares its permissions with `d.Authz.Declare` in `New`, and hides UI with
+   `useCan`. The auth and rbac modules fill the slots; without rbac, signed in = allowed.
 3. **It builds only on the kernel** (`requires_kernel`) and on `ui` kits listed in `ui`.
 4. **Frontend contributes through `FrontendModule`** (`module.tsx`): routes, `nav`, `slots`,
    and at most a `guard` or a `layout`.
@@ -34,7 +36,7 @@ The format is JSON rather than YAML so the tooling stays dependency-free, like t
   "when_to_use": ["…"],               // what makes it the right pick
   "when_not_to_use": ["…"],           // when to build something else instead
   "stacks": ["go"],                   // backend stacks it ships for (empty for web/ui)
-  "requires_kernel": 1,               // kernel.Version it is built against
+  "requires_kernel": 2,               // minimum kernel.Version it needs
 
   "provides": {
     "contracts": ["UserClient"],      // interfaces in api/contracts other modules can be wired to
@@ -54,6 +56,9 @@ The format is JSON rather than YAML so the tooling stays dependency-free, like t
     }
   ],
   "ui": ["ui-core"],                  // ui kits its frontend is built on
+  "permissions": [                    // what it declares with d.Authz.Declare — <id>.<action>
+    { "name": "users.manage", "description": "Add, edit, deactivate, and delete users" }
+  ],
 
   "owns_tables": ["users"],
   "env": [
@@ -74,7 +79,7 @@ The format is JSON rather than YAML so the tooling stays dependency-free, like t
       "import": "internal/modules/auth",
       "build": ["authModule := auth.New(d, {{port:UserStore}})"],
       "routes": ["authModule.Routes(mux)"],
-      "after": ["d.Auth.Provide(authModule.Authenticator())"]
+      "after": ["d.Auth.Provide(authModule.Authenticator())"]   // e.g. filling a kernel slot
     },
     "web": { "import": "@/modules/auth/module", "export": "authModule" }
   }

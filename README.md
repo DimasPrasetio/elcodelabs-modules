@@ -74,12 +74,15 @@ npm run check                   # manifests valid + catalog current (CI runs thi
 TESTBED_DB_DSN='root:@tcp(localhost:3306)/' npm run testbed -- --skill ~/path/to/monorepo-elcodelabs
 ```
 
-The testbed needs Go, `sqlc`, `gofmt`, Node, and — for the API checks of the full scenario —
-a MySQL server and the `mysql` client (it creates and drops a throwaway database). Scenarios:
+The testbed needs Go, `sqlc`, `gofmt`, Node, and — for the API checks of `full` and `no-rbac` —
+a MySQL server and the `mysql` client (it creates and drops throwaway databases; migrations run
+through the project's `npm run migrate:up` with golang-migrate, installed into `.testbed/bin`).
+Scenarios:
 
 | Scenario | Proves |
 |---|---|
-| `full` | preset + ui-core + app-shell + users + auth (UserStore ← users) build, pass unit tests, and work end to end: sign-in, users CRUD, deactivation ending a session, logout, SPA served |
+| `full` | preset + ui-core + app-shell + users + auth + rbac (ports ← users) build, pass unit tests, migrate with golang-migrate, and work end to end: sign-in, users CRUD, deactivation ending a session, roles and permissions (403 without, granted immediately, Administrator protected), logout, SPA served |
+| `no-rbac` | users + auth without rbac: the kernel's default — any signed-in user passes `users.manage` |
 | `auth-alone` | auth runs on a UserStore the project wrote itself — no users module |
 | `users-alone` | users runs without any auth provider; its guarded routes refuse (401) |
 | `lifecycle` | the CLI on a throwaway git copy of the library: add (and a refused add), status, upgrade merging the project's and the library's changes (then the project still builds), a conflicting upgrade, detach, promote (and a refused promote) |

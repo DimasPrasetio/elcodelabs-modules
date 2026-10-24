@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 // Testbed — proves the library's modules install into a freshly scaffolded project and work.
 //
-// Four scenarios, each in its own fresh project scaffolded with monorepo-elcodelabs (Go):
-//   full        preset bingkai-navy + ui-core + app-shell + users + auth (UserStore ← users)
+// Five scenarios, each in its own fresh project scaffolded with monorepo-elcodelabs (Go):
+//   full        preset bingkai-navy + ui-core + app-shell + users + auth + rbac (ports ← users)
+//   no-rbac     users + auth without rbac: the kernel's default "signed in = allowed"
 //   auth-alone  ui-core + auth, UserStore ← an adapter the project wrote itself (no users module)
 //   users-alone ui-core + users, no auth provider (guarded routes must refuse)
 //   lifecycle   the module.mjs CLI: add, status, upgrade (clean merge + conflict), detach, promote
 // Each: install → npm install → go mod tidy → sqlc generate → gofmt → go vet → go test →
 // build:web → build:api → run the binary and call the API.
 //
-// The full scenario's API checks need MySQL: set TESTBED_DB_DSN to a server DSN without a
-// database (e.g. "root:@tcp(localhost:3306)/"). A throwaway database is created, migrated with
-// the mysql client, and dropped. Without it those checks are skipped — and reported.
+// The API checks of full and no-rbac need MySQL: set TESTBED_DB_DSN to a server DSN without a
+// database (e.g. "root:@tcp(localhost:3306)/"). A throwaway database is created (mysql client),
+// migrated with npm run migrate:up (golang-migrate, installed into .testbed/bin), and dropped.
+// Without it those checks are skipped — and reported.
 //
 // Usage: node scripts/testbed.mjs [--skill <path to monorepo-elcodelabs>] [--only <scenario>] [--keep]
 //   --skill defaults to $SKILL_DIR, then ~/.claude/skills/monorepo-elcodelabs.
@@ -149,27 +151,58 @@ function mysql(db, sqlOrFile, database) {
   if (r.status !== 0) throw new Error(`mysql: ${r.stderr}`);
 }
 
+// golang-migrate, the project's own migration tool (npm run migrate:up → scripts/migrate.mjs),
+// so migrations are tested the way production runs them. Installed into .testbed/bin once.
+let migrateBin;
+function migratePath() {
+  if (migrateBin !== undefined) return migrateBin;
+  const bin = join(LIB, ".testbed", "bin");
+  if (!existsSync(join(bin, "migrate"))) {
+    mkdirSync(bin, { recursive: true });
+    const r = spawnSync("go", ["install", "-tags", "mysql", "github.com/golang-migrate/migrate/v4/cmd/migrate@v4.18.1"], {
+      encoding: "utf8", env: { ...process.env, GOBIN: bin },
+    });
+    if (r.status !== 0) throw new Error(`installing golang-migrate failed: ${r.stderr}`);
+  }
+  migrateBin = bin;
+  return bin;
+}
+
+/** Creates a throwaway database, migrates it with npm run migrate:up, returns its DSN. */
+function freshDatabase(dir, db, name) {
+  mysql(db, `CREATE DATABASE ${name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`);
+  const dsn = `${db.user}${db.pass ? `:${db.pass}` : ""}@tcp(${db.host}:${db.port})/${name}`;
+  if (!run("npm", ["run", "migrate:up"], dir, "npm run migrate:up (golang-migrate, multi-statement files)", {
+    DB_DSN: dsn, PATH: `${migratePath()}:${process.env.PATH}`,
+  })) throw new Error("migrations failed");
+  return dsn;
+}
+
 // --- scenarios ---------------------------------------------------------------------------
 
 async function full() {
-  log("\n=== full: bingkai-navy + ui-core + app-shell + users + auth ===");
+  log("\n=== full: bingkai-navy + ui-core + app-shell + users + auth + rbac ===");
   const dir = scaffold("full");
   try {
     applyPreset(LIB, dir, "bingkai-navy");
-    for (const [id, opts] of [["ui-core"], ["app-shell"], ["users"], ["auth", { ports: { UserStore: "users" } }]]) {
+    for (const [id, opts] of [
+      ["ui-core"], ["app-shell"], ["users"],
+      ["auth", { ports: { UserStore: "users" } }],
+      ["rbac", { ports: { UserDirectory: "users" } }],
+    ]) {
       installModule(LIB, dir, id, opts);
     }
-    pass("preset + 4 modules installed through the markers");
+    pass("preset + 5 modules installed through the markers");
     const reg = readFileSync(join(dir, "apps/api/internal/modules/registry.go"), "utf8");
     expect("registry wires auth's UserStore port to users through an adapter",
       reg.includes("auth.New(d, authUserStore{users: usersModule.Client()})") && existsSync(join(dir, "apps/api/internal/modules/adapter_auth_userstore.go")));
-    for (const id of ["users", "auth"]) {
+    for (const id of ["users", "auth", "rbac"]) {
       const src = readdirSync(join(dir, `apps/api/internal/modules/${id}`), { recursive: true })
         .filter((f) => f.endsWith(".go"))
         .map((f) => readFileSync(join(dir, `apps/api/internal/modules/${id}`, f), "utf8"))
         .join("\n");
-      const other = id === "users" ? "auth" : "users";
-      expect(`${id} imports no other module`, !src.includes(`/internal/modules/${other}`));
+      const others = ["users", "auth", "rbac"].filter((o) => o !== id);
+      expect(`${id} imports no other module`, others.every((o) => !src.includes(`/internal/modules/${o}`)));
     }
     if (!build(dir)) return;
 
@@ -179,15 +212,12 @@ async function full() {
     }
     const db = parseDsn(DB_DSN);
     const name = `elco_testbed_${Date.now()}`;
-    mysql(db, `CREATE DATABASE ${name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`);
     let api;
     try {
-      const migDir = join(dir, "apps/api/migrations");
-      for (const f of readdirSync(migDir).filter((f) => f.endsWith(".up.sql")).sort()) mysql(db, join(migDir, f), name);
-      pass("migrations applied (baseline + users)");
+      const dsn = freshDatabase(dir, db, name);
       const port = 18091;
       api = await startApi(dir, port, {
-        DB_DSN: `${db.user}${db.pass ? `:${db.pass}` : ""}@tcp(${db.host}:${db.port})/${name}`,
+        DB_DSN: dsn,
         USERS_BOOTSTRAP_EMAIL: "admin@example.com",
         USERS_BOOTSTRAP_PASSWORD: "admin-pass-123",
         PUBLIC_DIR: join(dir, "apps/web/dist"),
@@ -220,6 +250,35 @@ async function full() {
       expect("admin deactivates her", (await admin.call("PUT", `/api/v1/users/${anaId}`, { name: "Ana", email: "ana@example.com", is_active: false })).status === 200);
       expect("her open session ends on the next request → 401", (await ana.call("GET", "/api/v1/auth/me")).status === 401);
       expect("admin deletes her → 200", (await admin.call("DELETE", `/api/v1/users/${anaId}`)).status === 200);
+
+      // rbac: the bootstrap admin holds Administrator (*); a user without roles holds nothing.
+      const perms = await admin.call("GET", "/api/v1/rbac/permissions");
+      const names = (perms.body.data ?? []).map((p) => p.name);
+      expect("permission catalog = what the modules declared",
+        ["rbac.manage", "users.manage", "users.read"].every((n) => names.includes(n)), names);
+      const adminMe = await admin.call("GET", "/api/v1/rbac/me");
+      expect("admin's effective permissions include every declared one", adminMe.body.data?.permissions?.length === names.length, adminMe.body);
+      const budi = await admin.call("POST", "/api/v1/users", { name: "Budi", email: "budi@example.com", password: "budi-pass-123" });
+      const budiId = budi.body.data.id;
+      const b = client(port);
+      await b.call("POST", "/api/v1/auth/login", { email: "budi@example.com", password: "budi-pass-123" });
+      expect("user without roles: users list → 403", (await b.call("GET", "/api/v1/users")).status === 403);
+      expect("user without roles: rbac/me → no permissions", (await b.call("GET", "/api/v1/rbac/me")).body.data?.permissions?.length === 0);
+      const viewer = await admin.call("POST", "/api/v1/rbac/roles", { name: "Viewer", description: "Read only", permissions: ["users.read"] });
+      expect("create role Viewer (users.read) → 201", viewer.status === 201, viewer.body);
+      const bad = await admin.call("POST", "/api/v1/rbac/roles", { name: "Bad", permissions: ["nope.never"] });
+      expect("unknown permission → 422", bad.status === 422, bad.body);
+      expect("give Budi the Viewer role", (await admin.call("POST", `/api/v1/rbac/roles/${viewer.body.data.id}/members`, { user_id: budiId })).status === 201);
+      expect("Budi can now read users (immediately)", (await b.call("GET", "/api/v1/users")).status === 200);
+      expect("but not change them → 403", (await b.call("POST", "/api/v1/users", { name: "X", email: "x@example.com", password: "x-pass-1234" })).status === 403);
+      expect("nor manage roles → 403", (await b.call("GET", "/api/v1/rbac/roles")).status === 403);
+      const roles = await admin.call("GET", "/api/v1/rbac/roles");
+      const adminRole = roles.body.data.find((r) => r.is_system);
+      expect("Administrator role exists with one member", adminRole?.member_count === 1, roles.body);
+      expect("Administrator cannot be changed → 409", (await admin.call("PUT", `/api/v1/rbac/roles/${adminRole.id}`, { name: "Root", permissions: [] })).status === 409);
+      expect("the last Administrator keeps the role → 409", (await admin.call("DELETE", `/api/v1/rbac/roles/${adminRole.id}/members/${adminId}`)).status === 409);
+      expect("delete the Viewer role → Budi loses access", (await admin.call("DELETE", `/api/v1/rbac/roles/${viewer.body.data.id}`)).status === 200
+        && (await b.call("GET", "/api/v1/users")).status === 403);
       const out = await admin.call("POST", "/api/v1/auth/logout");
       expect("logout clears the cookie", out.status === 200 && /Max-Age=0/i.test(out.setCookie ?? ""), out.setCookie);
       expect("after logout → 401", (await admin.call("GET", "/api/v1/auth/me")).status === 401);
@@ -235,6 +294,42 @@ async function full() {
   } finally {
     if (!KEEP) rmSync(dir, { recursive: true, force: true });
     else log(`  (kept ${dir})`);
+  }
+}
+
+async function noRbac() {
+  log("\n=== no-rbac: users + auth without rbac — signed in = allowed ===");
+  const dir = scaffold("no-rbac");
+  let api;
+  let db;
+  const name = `elco_testbed_norbac_${Date.now()}`;
+  try {
+    installModule(LIB, dir, "ui-core");
+    installModule(LIB, dir, "users");
+    installModule(LIB, dir, "auth", { ports: { UserStore: "users" } });
+    pass("users + auth installed, no rbac");
+    if (!build(dir)) return;
+    if (!DB_DSN) {
+      skip("no-rbac: API checks against MySQL — set TESTBED_DB_DSN");
+      return;
+    }
+    db = parseDsn(DB_DSN);
+    const dsn = freshDatabase(dir, db, name);
+    api = await startApi(dir, 18094, { DB_DSN: dsn, USERS_BOOTSTRAP_EMAIL: "admin@example.com", USERS_BOOTSTRAP_PASSWORD: "admin-pass-123" });
+    const admin = client(18094);
+    await admin.call("POST", "/api/v1/auth/login", { email: "admin@example.com", password: "admin-pass-123" });
+    await admin.call("POST", "/api/v1/users", { name: "Cici", email: "cici@example.com", password: "cici-pass-123" });
+    const c = client(18094);
+    await c.call("POST", "/api/v1/auth/login", { email: "cici@example.com", password: "cici-pass-123" });
+    expect("any signed-in user may manage users (users.manage, default policy)",
+      (await c.call("POST", "/api/v1/users", { name: "Dodi", email: "dodi@example.com", password: "dodi-pass-123" })).status === 201);
+    expect("not signed in is still 401", (await client(18094).call("GET", "/api/v1/users")).status === 401);
+  } catch (err) {
+    fail(`no-rbac: ${err.message}${api ? `\n${api.output()}` : ""}`);
+  } finally {
+    stopApi(api);
+    if (db) mysql(db, `DROP DATABASE IF EXISTS ${name};`);
+    if (!KEEP) rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -324,13 +419,13 @@ async function lifecycle() {
     edit(join(lib, "modules/users/web/pages/UsersPage.tsx"), "const LIMIT = 25;", "const LIMIT = 20;");
     writeFileSync(join(lib, "modules/users/migrations/002_add_users_phone.up.sql"), "ALTER TABLE users ADD COLUMN phone VARCHAR(30) NULL;\n");
     writeFileSync(join(lib, "modules/users/migrations/002_add_users_phone.down.sql"), "ALTER TABLE users DROP COLUMN phone;\n");
-    bump("0.2.0");
+    bump("0.9.0");
     g("add", "-A");
     g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "users 0.2.0");
 
     st = JSON.parse(cli("status", "--json").stdout).find((s) => s.id === "users");
-    expect("status: users changed here, 0.2.0 available",
-      st.modified.includes("apps/web/src/modules/users/pages/UsersPage.tsx") && st.available === "0.2.0", st);
+    expect("status: users changed here, 0.9.0 available",
+      st.modified.includes("apps/web/src/modules/users/pages/UsersPage.tsx") && st.available === "0.9.0", st);
     r = cli("upgrade", "users");
     const merged = readFileSync(page, "utf8");
     expect("upgrade users merges cleanly (exit 0)", r.status === 0, r.stdout + r.stderr);
@@ -342,7 +437,7 @@ async function lifecycle() {
 
     // The library changes the very line the project changed.
     edit(join(lib, "modules/users/web/pages/UsersPage.tsx"), "People who can sign in to this app.", "Everyone with an account.");
-    bump("0.3.0");
+    bump("0.10.0");
     g("add", "-A");
     g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "users 0.3.0");
     r = cli("upgrade", "users");
@@ -387,7 +482,7 @@ for (const tool of ["go", "sqlc", "gofmt"]) {
   }
 }
 
-const scenarios = { full, "auth-alone": authAlone, "users-alone": usersAlone, lifecycle };
+const scenarios = { full, "no-rbac": noRbac, "auth-alone": authAlone, "users-alone": usersAlone, lifecycle };
 for (const [name, fn] of Object.entries(scenarios)) {
   if (!ONLY || ONLY === name) await fn();
 }

@@ -55,6 +55,17 @@ func (r *Repository) Get(ctx context.Context, id int64) (domain.User, error) {
 	return domain.User{ID: row.ID, Name: row.Name, Email: row.Email, IsActive: row.IsActive, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}, nil
 }
 
+func (r *Repository) GetByEmail(ctx context.Context, email string) (domain.User, error) {
+	row, err := r.q.GetUserByEmail(ctx, email)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.User{}, application.ErrNotFound
+	}
+	if err != nil {
+		return domain.User{}, err
+	}
+	return domain.User{ID: row.ID, Name: row.Name, Email: row.Email, IsActive: row.IsActive, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}, nil
+}
+
 func (r *Repository) GetCredentialsByEmail(ctx context.Context, email string) (application.Credentials, error) {
 	row, err := r.q.GetCredentialsByEmail(ctx, email)
 	if errors.Is(err, sql.ErrNoRows) {

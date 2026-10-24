@@ -5,12 +5,13 @@
 
 ## Modules
 
-| Module | Kind | Version | What it does | Offers | Needs (ports) | Builds on |
-|---|---|---|---|---|---|---|
-| [app-shell](modules/app-shell/README.md) | web | 0.1.0 | The frame around protected pages: collapsible sidebar built from every module's nav, inset canvas, breadcrumb header, and slots for a user menu. | — | — | ui-core |
-| [auth](modules/auth/README.md) | fullstack | 0.1.0 | Email + password sign-in: JWT in an HttpOnly cookie (Bearer for non-browser clients), login/logout/me, failed-attempt limit, the frontend guard, sign-in page, and user menu. Fills the kernel's d.Auth. | kernel auth | UserStore ← users | ui-core |
-| [ui-core](modules/ui-core/README.md) | ui | 0.1.0 | The shadcn primitives and generic building blocks most screens need: page header, data table, pagination, form field, empty/error states, confirm dialog. | — | — | — |
-| [users](modules/users/README.md) | fullstack | 0.1.0 | The people who can sign in: list, search, add, edit, deactivate, delete; first-user bootstrap from env. Offers UserClient. | UserClient | — | ui-core |
+| Module | Kind | Version | Kernel ≥ | What it does | Offers | Needs (ports) | Permissions | Builds on |
+|---|---|---|---|---|---|---|---|---|
+| [app-shell](modules/app-shell/README.md) | web | 0.2.0 | 2 | The frame around protected pages: collapsible sidebar built from every module's nav, inset canvas, breadcrumb header, and slots for a user menu. | — | — | — | ui-core |
+| [auth](modules/auth/README.md) | fullstack | 0.2.0 | 2 | Email + password sign-in: JWT in an HttpOnly cookie (Bearer for non-browser clients), login/logout/me, failed-attempt limit, the frontend guard, sign-in page, and user menu. Fills the kernel's d.Auth. | kernel auth | UserStore ← users | — | ui-core |
+| [rbac](modules/rbac/README.md) | fullstack | 0.1.0 | 2 | Who may do what: roles hold permissions that modules declare, users hold roles. Fills the kernel's d.Authz; Roles page with a per-module permission editor and members; Administrator role with every permission. | kernel authz | UserDirectory ← users | rbac.manage | ui-core |
+| [ui-core](modules/ui-core/README.md) | ui | 0.1.0 | 1 | The shadcn primitives and generic building blocks most screens need: page header, data table, pagination, form field, empty/error states, confirm dialog. | — | — | — | — |
+| [users](modules/users/README.md) | fullstack | 0.2.0 | 2 | The people who can sign in: list, search, add, edit, deactivate, delete; first-user bootstrap from env. Offers UserClient; guarded by users.read / users.manage. | UserClient | — | users.read, users.manage | ui-core |
 
 ### When to use
 
@@ -18,9 +19,11 @@
 
 **auth** — use: Any app where people sign in with an email and password the app checks itself. Not when: Sign-in only through SSO/OAuth/an identity provider. Refresh tokens, password reset, or 2FA are needed now — not in this version (reset needs a mail module).
 
+**rbac** — use: Different people need different access: admins, staff, read-only viewers. Any app with more than one kind of user, once auth is in. Not when: Every signed-in user may do everything — without rbac that is already the policy. Access that depends on the record itself (only your branch's invoices): rbac grants per action, not per row — build that in the module that owns the data.
+
 **ui-core** — use: Any project with list, detail, or form screens — most library modules with a frontend build on it. Not when: A one-page site with no data screens: the scaffold's starter primitives are enough.
 
-**users** — use: Any app where people sign in with an account the app itself stores. Not when: Sign-in through an external identity provider only (SSO/OAuth) with no local accounts. Roles and permissions — a separate module; this one has none (every signed-in user can manage users).
+**users** — use: Any app where people sign in with an account the app itself stores. Not when: Sign-in through an external identity provider only (SSO/OAuth) with no local accounts.
 
 ## Theme presets
 

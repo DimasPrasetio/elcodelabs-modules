@@ -17,6 +17,7 @@ import { EmptyState } from "@/shared/components/ui/empty-state";
 import { ErrorState } from "@/shared/components/ui/error-state";
 import { PageHeader } from "@/shared/components/ui/page-header";
 import { PaginationBar } from "@/shared/components/ui/pagination-bar";
+import { useCan } from "@/shared/access";
 import { apiErrorMessage } from "@/shared/services/api-error";
 import type { PageMeta } from "@/shared/types/api";
 import { UserFormDialog } from "@/modules/users/components/UserFormDialog";
@@ -51,6 +52,8 @@ export default function UsersPage() {
   const [editing, setEditing] = useState<User | undefined>();
   const [formOpen, setFormOpen] = useState(false);
   const [deleting, setDeleting] = useState<User | undefined>();
+  // Hide what this user may not do; the API refuses it anyway (users.manage).
+  const canManage = useCan("users.manage");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -94,6 +97,8 @@ export default function UsersPage() {
     { key: "email", header: "Email", cell: (u) => <span className="text-muted-foreground">{u.email}</span> },
     { key: "status", header: "Status", cell: (u) => <StatusPill active={u.is_active} /> },
     { key: "created", header: "Added", cell: (u) => dateFormat.format(new Date(u.created_at)) },
+  ];
+  if (canManage) columns.push(
     {
       key: "actions",
       header: <span className="sr-only">Actions</span>,
@@ -117,7 +122,7 @@ export default function UsersPage() {
         </div>
       ),
     },
-  ];
+  );
 
   const filtered = query !== "";
 
@@ -127,10 +132,12 @@ export default function UsersPage() {
         title="Users"
         description="People who can sign in to this app."
         actions={
-          <Button onClick={openCreate}>
-            <Plus />
-            Add user
-          </Button>
+          canManage && (
+            <Button onClick={openCreate}>
+              <Plus />
+              Add user
+            </Button>
+          )
         }
       />
       <Card className="gap-0 overflow-hidden py-0">
@@ -156,7 +163,7 @@ export default function UsersPage() {
               getRowId={(u) => u.id}
               loading={loading}
               skeletonRows={8}
-              onRowClick={openEdit}
+              onRowClick={canManage ? openEdit : undefined}
               rowLabel={(u) => `Edit ${u.name}`}
               empty={
                 filtered ? (
@@ -175,10 +182,12 @@ export default function UsersPage() {
                     title="No users yet"
                     description="Add the people who should be able to sign in."
                     action={
-                      <Button size="sm" onClick={openCreate}>
-                        <Plus />
-                        Add the first user
-                      </Button>
+                      canManage && (
+                        <Button size="sm" onClick={openCreate}>
+                          <Plus />
+                          Add the first user
+                        </Button>
+                      )
                     }
                   />
                 )

@@ -35,10 +35,28 @@ function goModulePath(project) {
   return existsSync(p) ? read(p).match(/^module (\S+)/m)[1] : undefined;
 }
 
+/** The project's kernel version: the Go kernel's, else the frontend's shared/kernel.ts. */
 function kernelVersion(project) {
-  const p = join(project, "apps/api/internal/kernel/kernel.go");
-  const m = existsSync(p) && read(p).match(/const Version = (\d+)/);
-  return m ? Number(m[1]) : undefined;
+  for (const [file, re] of [
+    ["apps/api/internal/kernel/kernel.go", /const Version = (\d+)/],
+    ["apps/web/src/shared/kernel.ts", /KERNEL_VERSION = (\d+)/],
+  ]) {
+    const p = join(project, file);
+    const m = existsSync(p) && read(p).match(re);
+    if (m) return Number(m[1]);
+  }
+  return undefined;
+}
+
+/** requires_kernel is a minimum: a newer kernel only adds to what modules may use. */
+function assertKernel(project, m) {
+  const kv = kernelVersion(project);
+  if (m.register?.go && !existsSync(join(project, "apps/api/internal/kernel/kernel.go"))) {
+    throw new Error(`${m.id} needs the Go kernel, but this project has none (apps/api/internal/kernel)`);
+  }
+  if ((kv ?? 1) < (m.requires_kernel ?? 1)) {
+    throw new Error(`${m.id} ${m.version} needs kernel ${m.requires_kernel} or newer; this project has kernel ${kv ?? 1} — move the project's kernel up first (monorepo-elcodelabs references/backend-go.md, "Kernel versions")`);
+  }
 }
 
 /** Throws unless dir looks like a monorepo-elcodelabs project. */
@@ -275,11 +293,7 @@ export function installModule(libRoot, project, id, options = {}) {
   const lock = readLock(project);
   if (lock.modules[id]) throw new Error(`${id} is already installed (${lock.modules[id].version}) — use upgrade`);
 
-  if (m.register?.go) {
-    const kv = kernelVersion(project);
-    if (kv === undefined) throw new Error(`${id} needs the Go kernel, but this project has none (apps/api/internal/kernel)`);
-    if (kv !== m.requires_kernel) throw new Error(`${id} needs kernel ${m.requires_kernel}; this project has kernel ${kv}`);
-  }
+  assertKernel(project, m);
   for (const kit of m.ui ?? []) {
     if (!lock.modules[kit]) throw new Error(`${id} builds on the ui kit "${kit}" — add it first`);
   }
@@ -491,10 +505,7 @@ export function upgrade(libRoot, project, id, options = {}) {
   const baseSrc = atCommit(libRoot, entry.commit);
   const mBase = manifestFrom(baseSrc, id);
   const mNew = manifestFrom(theirsSrc, id);
-  if (mNew.register?.go) {
-    const kv = kernelVersion(project);
-    if (kv !== mNew.requires_kernel) throw new Error(`${id} ${mNew.version} needs kernel ${mNew.requires_kernel}; this project has kernel ${kv}`);
-  }
+  assertKernel(project, mNew);
   const ports = { ...entry.ports, ...(options.ports ?? {}) };
   const portExpr = resolvePorts(mNew, ports, lock);
   const notes = [];

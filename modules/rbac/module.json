@@ -1,0 +1,74 @@
+{
+  "id": "rbac",
+  "version": "0.1.0",
+  "kind": "fullstack",
+  "title": "Roles and permissions (RBAC)",
+  "summary": "Who may do what: roles hold permissions that modules declare, users hold roles. Fills the kernel's d.Authz; Roles page with a per-module permission editor and members; Administrator role with every permission.",
+  "when_to_use": [
+    "Different people need different access: admins, staff, read-only viewers.",
+    "Any app with more than one kind of user, once auth is in."
+  ],
+  "when_not_to_use": [
+    "Every signed-in user may do everything — without rbac that is already the policy.",
+    "Access that depends on the record itself (only your branch's invoices): rbac grants per action, not per row — build that in the module that owns the data."
+  ],
+  "stacks": ["go"],
+  "requires_kernel": 2,
+  "provides": { "contracts": [], "kernel": ["authz"] },
+  "ports": [
+    {
+      "name": "UserDirectory",
+      "required": true,
+      "description": "Get a user by ID or email, and search users by name or email — to give roles to.",
+      "adapters": {
+        "users": {
+          "file": "adapters/userdirectory_users.go",
+          "expr": "rbacUserDirectory{users: usersModule.Client()}"
+        }
+      }
+    }
+  ],
+  "ui": ["ui-core"],
+  "permissions": [
+    { "name": "rbac.manage", "description": "Manage roles, their permissions, and who holds them" }
+  ],
+  "owns_tables": ["roles", "role_permissions", "user_roles"],
+  "env": [
+    { "name": "RBAC_BOOTSTRAP_ADMIN_EMAIL", "required": false, "description": "Gets the Administrator role while nobody holds it (default: USERS_BOOTSTRAP_EMAIL)." }
+  ],
+  "routes": {
+    "api": [
+      "GET /api/v1/rbac/me",
+      "GET /api/v1/rbac/permissions",
+      "GET /api/v1/rbac/roles",
+      "POST /api/v1/rbac/roles",
+      "GET /api/v1/rbac/roles/{id}",
+      "PUT /api/v1/rbac/roles/{id}",
+      "DELETE /api/v1/rbac/roles/{id}",
+      "GET /api/v1/rbac/roles/{id}/members",
+      "POST /api/v1/rbac/roles/{id}/members",
+      "DELETE /api/v1/rbac/roles/{id}/members/{userId}",
+      "GET /api/v1/rbac/users"
+    ],
+    "web": ["/roles", "/roles/:id"]
+  },
+  "npm_dependencies": {},
+  "install": {
+    "api": "apps/api/internal/modules/rbac",
+    "web": "apps/web/src/modules/rbac"
+  },
+  "register": {
+    "go": {
+      "import": "internal/modules/rbac",
+      "build": [
+        "rbacModule, err := rbac.New(d, {{port:UserDirectory}})",
+        "if err != nil {",
+        "\treturn err",
+        "}"
+      ],
+      "routes": ["rbacModule.Routes(mux)"],
+      "after": ["d.Authz.Provide(rbacModule.Authorizer())"]
+    },
+    "web": { "import": "@/modules/rbac/module", "export": "rbacModule" }
+  }
+}

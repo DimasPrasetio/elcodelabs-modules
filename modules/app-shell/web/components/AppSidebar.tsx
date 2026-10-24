@@ -1,4 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
+import { useAccess } from "@/shared/access";
 import { useNavItems, useSlot } from "@/shared/composition";
 import type { NavItem } from "@/shared/composition";
 import {
@@ -32,7 +33,9 @@ function groupItems(items: NavItem[]): [string, NavItem[]][] {
 }
 
 export function AppSidebar() {
-  const items = useNavItems();
+  const { can } = useAccess();
+  // Entries the user may not open are not shown (the API refuses them anyway).
+  const items = useNavItems().filter((item) => !item.permission || can(item.permission));
   const footer = useSlot("sidebar-footer");
   const { pathname } = useLocation();
   const active = activeNavItem(items, pathname);

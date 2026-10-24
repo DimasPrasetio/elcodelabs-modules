@@ -1,26 +1,58 @@
 {
   "id": "users",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "kind": "fullstack",
   "title": "Users",
-  "summary": "The people who can sign in: list, search, add, edit, deactivate, delete; first-user bootstrap from env. Offers UserClient.",
+  "summary": "The people who can sign in: list, search, add, edit, deactivate, delete; first-user bootstrap from env. Offers UserClient; guarded by users.read / users.manage.",
   "when_to_use": [
     "Any app where people sign in with an account the app itself stores."
   ],
   "when_not_to_use": [
-    "Sign-in through an external identity provider only (SSO/OAuth) with no local accounts.",
-    "Roles and permissions — a separate module; this one has none (every signed-in user can manage users)."
+    "Sign-in through an external identity provider only (SSO/OAuth) with no local accounts."
   ],
-  "stacks": ["go"],
-  "requires_kernel": 1,
-  "provides": { "contracts": ["UserClient"], "kernel": [] },
+  "stacks": [
+    "go"
+  ],
+  "requires_kernel": 2,
+  "provides": {
+    "contracts": [
+      "UserClient"
+    ],
+    "kernel": []
+  },
   "ports": [],
-  "ui": ["ui-core"],
-  "owns_tables": ["users"],
+  "ui": [
+    "ui-core"
+  ],
+  "permissions": [
+    {
+      "name": "users.read",
+      "description": "View the list of users"
+    },
+    {
+      "name": "users.manage",
+      "description": "Add, edit, deactivate, and delete users"
+    }
+  ],
+  "owns_tables": [
+    "users"
+  ],
   "env": [
-    { "name": "USERS_BOOTSTRAP_EMAIL", "required": false, "description": "With USERS_BOOTSTRAP_PASSWORD: creates this first user when the users table is empty." },
-    { "name": "USERS_BOOTSTRAP_PASSWORD", "required": false, "description": "Password of the bootstrap user (at least 8 characters). Remove both after the first sign-in." },
-    { "name": "USERS_BOOTSTRAP_NAME", "required": false, "description": "Name of the bootstrap user (default: Administrator)." }
+    {
+      "name": "USERS_BOOTSTRAP_EMAIL",
+      "required": false,
+      "description": "With USERS_BOOTSTRAP_PASSWORD: creates this first user when the users table is empty."
+    },
+    {
+      "name": "USERS_BOOTSTRAP_PASSWORD",
+      "required": false,
+      "description": "Password of the bootstrap user (at least 8 characters). Remove both after the first sign-in."
+    },
+    {
+      "name": "USERS_BOOTSTRAP_NAME",
+      "required": false,
+      "description": "Name of the bootstrap user (default: Administrator)."
+    }
   ],
   "routes": {
     "api": [
@@ -30,7 +62,9 @@
       "PUT /api/v1/users/{id}",
       "DELETE /api/v1/users/{id}"
     ],
-    "web": ["/users"]
+    "web": [
+      "/users"
+    ]
   },
   "npm_dependencies": {},
   "install": {
@@ -46,9 +80,14 @@
         "\treturn err",
         "}"
       ],
-      "routes": ["usersModule.Routes(mux)"],
+      "routes": [
+        "usersModule.Routes(mux)"
+      ],
       "after": []
     },
-    "web": { "import": "@/modules/users/module", "export": "usersModule" }
+    "web": {
+      "import": "@/modules/users/module",
+      "export": "usersModule"
+    }
   }
 }

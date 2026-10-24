@@ -37,6 +37,7 @@ type Repository interface {
 	List(ctx context.Context, search string, p pagination.Params) ([]domain.User, int64, error)
 	CountAll(ctx context.Context) (int64, error)
 	Get(ctx context.Context, id int64) (domain.User, error)
+	GetByEmail(ctx context.Context, email string) (domain.User, error)
 	GetCredentialsByEmail(ctx context.Context, email string) (Credentials, error)
 	Create(ctx context.Context, u NewUser) (int64, error)
 	Update(ctx context.Context, u domain.User) error
@@ -156,6 +157,12 @@ func (s *Service) Bootstrap(ctx context.Context, name, email, password string) (
 		return false, err
 	}
 	return true, nil
+}
+
+// GetByEmail is for the contract.
+func (s *Service) GetByEmail(ctx context.Context, email string) (domain.User, error) {
+	u, err := s.repo.GetByEmail(ctx, domain.NormalizeEmail(email))
+	return u, notFound(err)
 }
 
 // GetCredentialsByEmail is for the contract (an auth provider signing someone in).

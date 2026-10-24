@@ -2,7 +2,7 @@
   "modules": [
     {
       "id": "app-shell",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "kind": "web",
       "title": "App shell",
       "summary": "The frame around protected pages: collapsible sidebar built from every module's nav, inset canvas, breadcrumb header, and slots for a user menu.",
@@ -13,11 +13,12 @@
         "Public sites, single-screen tools, or full-screen modes (a POS on a tablet): give those their own layout."
       ],
       "stacks": [],
-      "requires_kernel": 1,
+      "requires_kernel": 2,
       "provides": {
         "contracts": [],
         "kernel": []
       },
+      "permissions": [],
       "ports": [],
       "ui": [
         "ui-core"
@@ -26,7 +27,7 @@
     },
     {
       "id": "auth",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "kind": "fullstack",
       "title": "Authentication",
       "summary": "Email + password sign-in: JWT in an HttpOnly cookie (Bearer for non-browser clients), login/logout/me, failed-attempt limit, the frontend guard, sign-in page, and user menu. Fills the kernel's d.Auth.",
@@ -40,13 +41,14 @@
       "stacks": [
         "go"
       ],
-      "requires_kernel": 1,
+      "requires_kernel": 2,
       "provides": {
         "contracts": [],
         "kernel": [
           "auth"
         ]
       },
+      "permissions": [],
       "ports": [
         {
           "name": "UserStore",
@@ -61,6 +63,52 @@
         "ui-core"
       ],
       "owns_tables": []
+    },
+    {
+      "id": "rbac",
+      "version": "0.1.0",
+      "kind": "fullstack",
+      "title": "Roles and permissions (RBAC)",
+      "summary": "Who may do what: roles hold permissions that modules declare, users hold roles. Fills the kernel's d.Authz; Roles page with a per-module permission editor and members; Administrator role with every permission.",
+      "when_to_use": [
+        "Different people need different access: admins, staff, read-only viewers.",
+        "Any app with more than one kind of user, once auth is in."
+      ],
+      "when_not_to_use": [
+        "Every signed-in user may do everything — without rbac that is already the policy.",
+        "Access that depends on the record itself (only your branch's invoices): rbac grants per action, not per row — build that in the module that owns the data."
+      ],
+      "stacks": [
+        "go"
+      ],
+      "requires_kernel": 2,
+      "provides": {
+        "contracts": [],
+        "kernel": [
+          "authz"
+        ]
+      },
+      "permissions": [
+        "rbac.manage"
+      ],
+      "ports": [
+        {
+          "name": "UserDirectory",
+          "required": true,
+          "description": "Get a user by ID or email, and search users by name or email — to give roles to.",
+          "adapters": [
+            "users"
+          ]
+        }
+      ],
+      "ui": [
+        "ui-core"
+      ],
+      "owns_tables": [
+        "roles",
+        "role_permissions",
+        "user_roles"
+      ]
     },
     {
       "id": "ui-core",
@@ -80,33 +128,37 @@
         "contracts": [],
         "kernel": []
       },
+      "permissions": [],
       "ports": [],
       "ui": [],
       "owns_tables": []
     },
     {
       "id": "users",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "kind": "fullstack",
       "title": "Users",
-      "summary": "The people who can sign in: list, search, add, edit, deactivate, delete; first-user bootstrap from env. Offers UserClient.",
+      "summary": "The people who can sign in: list, search, add, edit, deactivate, delete; first-user bootstrap from env. Offers UserClient; guarded by users.read / users.manage.",
       "when_to_use": [
         "Any app where people sign in with an account the app itself stores."
       ],
       "when_not_to_use": [
-        "Sign-in through an external identity provider only (SSO/OAuth) with no local accounts.",
-        "Roles and permissions — a separate module; this one has none (every signed-in user can manage users)."
+        "Sign-in through an external identity provider only (SSO/OAuth) with no local accounts."
       ],
       "stacks": [
         "go"
       ],
-      "requires_kernel": 1,
+      "requires_kernel": 2,
       "provides": {
         "contracts": [
           "UserClient"
         ],
         "kernel": []
       },
+      "permissions": [
+        "users.read",
+        "users.manage"
+      ],
       "ports": [],
       "ui": [
         "ui-core"

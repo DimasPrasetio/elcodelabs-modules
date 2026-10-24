@@ -1,5 +1,6 @@
 import axios from "axios";
 import { create } from "zustand";
+import { emitAppEvent } from "@/shared/app-events";
 import { fetchMe, login, logout } from "@/modules/auth/services/auth.service";
 import type { SessionUser } from "@/modules/auth/services/auth.service";
 import type { LoginFormValues } from "@/modules/auth/schemas/login.schema";
@@ -31,16 +32,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       if (!(axios.isAxiosError(err) && err.response?.status === 401)) throw err;
     }
   },
+  // Every change of who is signed in is announced, so other modules (e.g. permissions) reload.
   signIn: async (values) => {
     const user = await login(values);
     set({ status: "signed-in", user });
+    emitAppEvent("session:changed");
   },
   signOut: async () => {
     try {
       await logout();
     } finally {
       set({ status: "signed-out", user: null });
+      emitAppEvent("session:changed");
     }
   },
-  expire: () => set({ status: "signed-out", user: null }),
+  expire: () => {
+    if (get().status === "signed-out") return;
+    set({ status: "signed-out", user: null });
+    emitAppEvent("session:changed");
+  },
 }));

@@ -40,6 +40,15 @@ func (m *memRepo) Get(_ context.Context, id int64) (domain.User, error) {
 	return u, nil
 }
 
+func (m *memRepo) GetByEmail(_ context.Context, email string) (domain.User, error) {
+	for _, u := range m.users {
+		if u.Email == email {
+			return u, nil
+		}
+	}
+	return domain.User{}, application.ErrNotFound
+}
+
 func (m *memRepo) GetCredentialsByEmail(_ context.Context, email string) (application.Credentials, error) {
 	for id, u := range m.users {
 		if u.Email == email {

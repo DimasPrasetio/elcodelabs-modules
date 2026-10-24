@@ -29,6 +29,10 @@ type Credentials struct {
 type UserClient interface {
 	// GetByID returns the user, or ErrNotFound.
 	GetByID(ctx context.Context, id int64) (User, error)
+	// GetByEmail returns the user with email (case-insensitive), or ErrNotFound.
+	GetByEmail(ctx context.Context, email string) (User, error)
+	// Search returns up to limit users whose name or email contains q, newest first.
+	Search(ctx context.Context, q string, limit int) ([]User, error)
 	// GetCredentialsByEmail returns the credentials for email (case-insensitive), or ErrNotFound.
 	GetCredentialsByEmail(ctx context.Context, email string) (Credentials, error)
 }

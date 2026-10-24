@@ -1,4 +1,5 @@
-// Package presentation is the users module's HTTP API. Every route requires a signed-in user.
+// Package presentation is the users module's HTTP API. Reading needs users.read, changing
+// needs users.manage (kernel Authz: without an authorization module, any signed-in user).
 package presentation
 
 import (
@@ -41,24 +42,31 @@ type updateRequest struct {
 	IsActive bool   `json:"is_active"`
 }
 
+// Permissions this module declares (users.module.go) and guards with.
+const (
+	PermRead   = "users.read"
+	PermManage = "users.manage"
+)
+
 // Handler serves /api/v1/users.
 type Handler struct {
-	svc  *application.Service
-	auth kernel.Authenticator
+	svc   *application.Service
+	auth  kernel.Authenticator
+	authz *kernel.AuthzSlot
 }
 
-func NewHandler(svc *application.Service, auth kernel.Authenticator) *Handler {
-	return &Handler{svc: svc, auth: auth}
+func NewHandler(svc *application.Service, auth kernel.Authenticator, authz *kernel.AuthzSlot) *Handler {
+	return &Handler{svc: svc, auth: auth, authz: authz}
 }
 
-// Routes mounts the handlers, each behind the auth guard.
+// Routes mounts the handlers, each behind its permission.
 func (h *Handler) Routes(mux *http.ServeMux) {
-	guard := func(f http.HandlerFunc) http.Handler { return h.auth.Require(f) }
-	mux.Handle("GET /api/v1/users", guard(h.list))
-	mux.Handle("POST /api/v1/users", guard(h.create))
-	mux.Handle("GET /api/v1/users/{id}", guard(h.get))
-	mux.Handle("PUT /api/v1/users/{id}", guard(h.update))
-	mux.Handle("DELETE /api/v1/users/{id}", guard(h.delete))
+	need := func(perm string, f http.HandlerFunc) http.Handler { return h.authz.Require(perm, f) }
+	mux.Handle("GET /api/v1/users", need(PermRead, h.list))
+	mux.Handle("GET /api/v1/users/{id}", need(PermRead, h.get))
+	mux.Handle("POST /api/v1/users", need(PermManage, h.create))
+	mux.Handle("PUT /api/v1/users/{id}", need(PermManage, h.update))
+	mux.Handle("DELETE /api/v1/users/{id}", need(PermManage, h.delete))
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {

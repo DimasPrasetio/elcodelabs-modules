@@ -22,6 +22,11 @@ SELECT id, name, email, is_active, created_at, updated_at
 FROM users
 WHERE id = ?;
 
+-- name: GetUserByEmail :one
+SELECT id, name, email, is_active, created_at, updated_at
+FROM users
+WHERE email = ?;
+
 -- name: GetCredentialsByEmail :one
 SELECT id, password_hash, is_active
 FROM users

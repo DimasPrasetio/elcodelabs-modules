@@ -24,3 +24,8 @@ guards its routes through that slot, never by importing auth.
 and `UserMenu` in the `"sidebar-footer"` slot. Replaces the scaffold's starter `auth` module.
 
 **Not in this version:** refresh tokens, password reset (needs a mail module), 2FA, SSO.
+
+## Changes
+
+- **0.2.0** — needs kernel 2. Emits the app event `session:changed` on sign-in, sign-out, and
+  expiry, so other modules (rbac's permissions) reload without importing auth.
