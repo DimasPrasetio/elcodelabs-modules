@@ -23,3 +23,4 @@ and builds on `ui-core` (breadcrumb, separator, sheet, tooltip).
 ## Changes
 
 - **0.2.0** — needs kernel 2. Hides nav entries whose `permission` the user does not hold.
+- **0.3.0** — needs kernel 3 (with ui-core 0.2.0). Indonesian accessible labels.

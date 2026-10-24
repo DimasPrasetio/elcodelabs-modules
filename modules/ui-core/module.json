@@ -1,24 +1,32 @@
 {
   "id": "ui-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "kind": "ui",
   "title": "UI core kit",
-  "summary": "The shadcn primitives and generic building blocks most screens need: page header, data table, pagination, form field, empty/error states, confirm dialog.",
+  "summary": "Bingkai Navy foundation every screen uses: the restyled shadcn primitives, page layout (Page, PageHeader, SectionCard, SummaryCard), StatusBadge with fixed tones, Notice, empty/error/404 states, skeletons, DescriptionList, Money/Qty/DocNumber, Modal, FormSheet, and id-ID formatters.",
   "when_to_use": [
-    "Any project with list, detail, or form screens — most library modules with a frontend build on it."
+    "Any project with screens — every other kit and every module with a frontend builds on it."
   ],
   "when_not_to_use": [
-    "A one-page site with no data screens: the scaffold's starter primitives are enough."
+    "Never skipped when a module has a frontend."
   ],
   "stacks": [],
-  "requires_kernel": 1,
-  "provides": { "contracts": [], "kernel": [] },
+  "requires_kernel": 3,
+  "provides": {
+    "contracts": [],
+    "kernel": []
+  },
   "ports": [],
   "ui": [],
   "owns_tables": [],
   "env": [],
-  "routes": { "api": [], "web": [] },
+  "routes": {
+    "api": [],
+    "web": []
+  },
   "npm_dependencies": {},
-  "install": { "shared": "apps/web/src/shared" },
+  "install": {
+    "shared": "apps/web/src/shared"
+  },
   "register": {}
 }

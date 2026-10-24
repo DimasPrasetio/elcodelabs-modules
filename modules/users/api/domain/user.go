@@ -43,6 +43,6 @@ func ValidateProfile(v *validator.Validator, name, email string) {
 
 // ValidatePassword checks a new password.
 func ValidatePassword(v *validator.Validator, field, password string) {
-	v.Check(utf8.RuneCountInString(password) >= MinPasswordLength, field, "must be at least 8 characters")
-	v.Check(len(password) <= MaxPasswordLength, field, "must be at most 72 bytes")
+	v.Check(utf8.RuneCountInString(password) >= MinPasswordLength, field, "minimal 8 karakter")
+	v.Check(len(password) <= MaxPasswordLength, field, "maksimal 72 byte")
 }

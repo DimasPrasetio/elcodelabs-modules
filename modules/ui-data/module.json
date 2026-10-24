@@ -1,0 +1,34 @@
+{
+  "id": "ui-data",
+  "version": "0.1.0",
+  "kind": "ui",
+  "title": "UI data kit",
+  "summary": "Lists and tables: DataTable (sort, selection with a bulk-action bar, column chooser, built-in loading/empty/error), Pagination, Toolbar with filter chips, FilterBar, SearchInput (debounced), ActionMenu (⋯), NavTabs.",
+  "when_to_use": [
+    "Any screen that lists records."
+  ],
+  "when_not_to_use": [
+    "A screen with no list or table."
+  ],
+  "stacks": [],
+  "requires_kernel": 3,
+  "provides": {
+    "contracts": [],
+    "kernel": []
+  },
+  "ports": [],
+  "ui": [
+    "ui-core"
+  ],
+  "owns_tables": [],
+  "env": [],
+  "routes": {
+    "api": [],
+    "web": []
+  },
+  "npm_dependencies": {},
+  "install": {
+    "shared": "apps/web/src/shared"
+  },
+  "register": {}
+}

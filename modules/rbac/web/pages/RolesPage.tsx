@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, ShieldCheck } from "lucide-react";
-import { Badge } from "@/shared/components/primitives/badge";
+import { Plus } from "lucide-react";
 import { Button } from "@/shared/components/primitives/button";
-import { Card } from "@/shared/components/primitives/card";
 import { DataTable } from "@/shared/components/ui/data-table";
-import type { Column } from "@/shared/components/ui/data-table";
-import { EmptyState } from "@/shared/components/ui/empty-state";
-import { ErrorState } from "@/shared/components/ui/error-state";
+import type { DataTableColumn } from "@/shared/components/ui/data-table";
+import { Page } from "@/shared/components/ui/page";
 import { PageHeader } from "@/shared/components/ui/page-header";
+import { StatusBadge } from "@/shared/components/ui/status-badge";
 import { apiErrorMessage } from "@/shared/services/api-error";
 import { RoleFormDialog } from "@/modules/rbac/components/RoleFormDialog";
 import { RBAC_PATHS } from "@/modules/rbac/paths";
@@ -39,55 +37,48 @@ export default function RolesPage() {
     void load();
   }, [load]);
 
-  const columns: Column<Role>[] = [
+  const columns: DataTableColumn<Role>[] = [
     {
-      key: "name",
-      header: "Role",
-      cell: (r) => (
+      header: "Peran",
+      render: (r) => (
         <span className="flex items-center gap-2 font-medium">
           {r.name}
-          {r.is_system && <Badge variant="secondary">System</Badge>}
+          {r.is_system && <StatusBadge tone="info">Sistem</StatusBadge>}
         </span>
       ),
     },
-    { key: "description", header: "Description", cell: (r) => <span className="text-muted-foreground">{r.description || "—"}</span> },
-    {
-      key: "permissions",
-      header: "Permissions",
-      align: "right",
-      cell: (r) => (r.permissions.includes(WILDCARD) ? "All" : r.permissions.length),
-    },
-    { key: "members", header: "Members", align: "right", cell: (r) => r.member_count },
+    { header: "Keterangan", render: (r) => <span className="text-muted-foreground">{r.description || "–"}</span> },
+    { header: "Izin", align: "right", width: 96, render: (r) => (r.permissions.includes(WILDCARD) ? "Semua" : r.permissions.length) },
+    { header: "Anggota", align: "right", width: 96, render: (r) => r.member_count },
   ];
 
   return (
-    <>
+    <Page>
       <PageHeader
-        title="Roles"
-        description="What each group of people may do. Permissions come from the installed modules."
+        title="Peran"
+        description="Apa yang boleh dilakukan setiap kelompok orang. Daftar izin berasal dari modul yang terpasang."
         actions={
           <Button onClick={() => setCreating(true)}>
             <Plus />
-            New role
+            Peran baru
           </Button>
         }
       />
-      <Card className="gap-0 overflow-hidden py-0">
-        {error ? (
-          <ErrorState message={error} onRetry={load} />
-        ) : (
-          <DataTable
-            columns={columns}
-            rows={roles}
-            getRowId={(r) => r.id}
-            loading={loading}
-            onRowClick={(r) => navigate(RBAC_PATHS.role(r.id))}
-            rowLabel={(r) => `Open ${r.name}`}
-            empty={<EmptyState icon={ShieldCheck} title="No roles yet" />}
-          />
-        )}
-      </Card>
-      <RoleFormDialog open={creating} onOpenChange={setCreating} onSaved={(r) => navigate(RBAC_PATHS.role(r.id))} />
-    </>
+      <section className="overflow-hidden rounded-xl border border-border bg-card">
+        <DataTable
+          columns={columns}
+          rows={roles}
+          rowKey={(r) => r.id}
+          loading={loading}
+          error={error}
+          onRetry={load}
+          onRowClick={(r) => navigate(RBAC_PATHS.role(r.id))}
+          rowLabel={(r) => `Buka ${r.name}`}
+          caption="Daftar peran"
+          emptyTitle="Belum ada peran"
+        />
+      </section>
+      <RoleFormDialog open={creating} onClose={() => setCreating(false)} onSaved={(r) => navigate(RBAC_PATHS.role(r.id))} />
+    </Page>
   );
 }

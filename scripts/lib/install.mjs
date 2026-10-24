@@ -250,20 +250,33 @@ function addSqlcBlock(project, id) {
 
 const utcStamp = (d) => d.toISOString().replace(/\D/g, "").slice(0, 14);
 
-/** Writes migrations with fresh versions after everything in the project. Returns name → file base. */
+function parseStamp(v) {
+  const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(v);
+  if (!m) return undefined;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
+/**
+ * Writes migrations with fresh timestamp versions (yyyymmddhhmmss, UTC), each a second after
+ * the latest in the project or now, whichever is later. Returns name → file base.
+ */
 function addMigrations(project, id, migrations) {
   const dir = join(project, "apps/api/migrations");
-  const existing = readdirSync(dir).map((f) => f.match(/^(\d+)_/)?.[1]).filter(Boolean).map(BigInt);
-  let v = BigInt(utcStamp(new Date()));
-  const max = existing.reduce((a, b) => (b > a ? b : a), 0n);
-  if (v <= max) v = max + 1n;
+  const latest = readdirSync(dir)
+    .map((f) => f.match(/^(\d{14})_/)?.[1])
+    .filter(Boolean)
+    .map(parseStamp)
+    .filter(Boolean)
+    .reduce((a, b) => (b > a ? b : a), new Date(0));
+  let t = Math.max(Date.now(), latest.getTime() + 1000);
   const written = {};
   for (const [name, { up, down }] of migrations) {
-    const base = `${v}_${id}_${name.replace(/^\d+_/, "")}`;
+    const base = `${utcStamp(new Date(t))}_${id}_${name.replace(/^\d+_/, "")}`;
     if (up !== undefined) writeFileSync(join(dir, `${base}.up.sql`), up);
     if (down !== undefined) writeFileSync(join(dir, `${base}.down.sql`), down);
     written[name] = base;
-    v += 1n;
+    t += 1000;
   }
   return written;
 }
@@ -302,10 +315,17 @@ export function installModule(libRoot, project, id, options = {}) {
   const goModule = goModulePath(project);
 
   const files = renderFiles(src, m, goModule, options.ports);
+  // A path that exists may be taken over only from another installed module that still has it
+  // exactly as the library rendered it (a file moved between kits); anything else is the project's.
+  const takeovers = [];
   for (const path of files.keys()) {
-    if (existsSync(join(project, path)) && !(m.replaces ?? []).some((r) => path.startsWith(`${r}/`))) {
-      throw new Error(`${id}: ${path} already exists in the project — refusing to overwrite`);
+    if (!existsSync(join(project, path)) || (m.replaces ?? []).some((r) => path.startsWith(`${r}/`))) continue;
+    const owner = Object.entries(lock.modules).find(([, e]) => e.files?.[path]);
+    if (owner && owner[1].files[path] === sha(read(join(project, path)))) {
+      takeovers.push([owner[0], path]);
+      continue;
     }
+    throw new Error(`${id}: ${path} already exists in the project${owner ? ` and ${owner[0]}'s copy was changed here` : ""} — refusing to overwrite`);
   }
 
   // Nothing above wrote anything: a refused install leaves the project as it was.
@@ -337,6 +357,7 @@ export function installModule(libRoot, project, id, options = {}) {
   const env = addEnv(project, id, m.env);
   addModuleMapRow(project, m);
 
+  for (const [owner, path] of takeovers) delete lock.modules[owner].files[path];
   const state = libraryState(libRoot);
   lock.modules[id] = {
     version: m.version,
@@ -359,7 +380,24 @@ export function installModule(libRoot, project, id, options = {}) {
     env: (m.env ?? []).map((e) => ({ ...e, added: env.includes(e.name) })),
     ports: Object.fromEntries(Object.entries(options.ports ?? {}).map(([k, v]) => [k, typeof v === "string" ? v : `expr ${v.expr}`])),
     dirty: state.dirty,
+    tookOver: takeovers.map(([owner, path]) => `${path} (from ${owner})`),
   };
+}
+
+/**
+ * The ui kits id needs (per the library's current manifest) that are not installed yet,
+ * deepest first — what add and upgrade install before it.
+ */
+export function missingKits(libRoot, project, id) {
+  const lock = readLock(project);
+  const order = [];
+  const visit = (kit) => {
+    if (lock.modules[kit] || order.includes(kit)) return;
+    for (const dep of loadManifest(libRoot, kit).ui ?? []) visit(dep);
+    order.push(kit);
+  };
+  for (const kit of loadManifest(libRoot, id).ui ?? []) visit(kit);
+  return order;
 }
 
 // --- preset -------------------------------------------------------------------------------
@@ -506,6 +544,9 @@ export function upgrade(libRoot, project, id, options = {}) {
   const mBase = manifestFrom(baseSrc, id);
   const mNew = manifestFrom(theirsSrc, id);
   assertKernel(project, mNew);
+  for (const kit of mNew.ui ?? []) {
+    if (!lock.modules[kit]) throw new Error(`${id} ${mNew.version} builds on the ui kit "${kit}" — add it first (module.mjs upgrade does)`);
+  }
   const ports = { ...entry.ports, ...(options.ports ?? {}) };
   const portExpr = resolvePorts(mNew, ports, lock);
   const notes = [];
@@ -550,7 +591,7 @@ export function upgrade(libRoot, project, id, options = {}) {
     register: { go: goLines, goImport: mNew.register?.go?.import ?? null, web: mNew.register?.web ?? null },
   };
   writeLock(project, lock);
-  return { id, from: entry.version, to: mNew.version, ...report, migrationsAdded: Object.keys(fresh), npm, env, notes };
+  return { id, from: entry.version, to: mNew.version, ...report, migrationsAdded: [...fresh.keys()], npm, env, notes };
 }
 
 // --- detach -------------------------------------------------------------------------------

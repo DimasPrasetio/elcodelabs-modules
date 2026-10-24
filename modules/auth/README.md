@@ -27,5 +27,8 @@ and `UserMenu` in the `"sidebar-footer"` slot. Replaces the scaffold's starter `
 
 ## Changes
 
+- **0.3.0** — needs kernel 3. Sign-in page on `ui-forms` (FormField, PasswordInput) and
+  `ui-core` (Notice); Indonesian copy and API messages.
+
 - **0.2.0** — needs kernel 2. Emits the app event `session:changed` on sign-in, sign-out, and
   expiry, so other modules (rbac's permissions) reload without importing auth.

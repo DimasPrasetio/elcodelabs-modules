@@ -84,6 +84,19 @@ html[data-density="comfortable"] {
   --row-py: 0.875rem;
 }
 
+/* Motion tokens used by the UI kits (the global loading bar). */
+@theme {
+  --animate-loader-slide: loader-slide 1.1s ease-in-out infinite;
+  @keyframes loader-slide {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
+    }
+  }
+}
+
 @theme inline {
   /* Inter for UI, Plus Jakarta Sans for titles and big numbers only, Geist Mono for codes. */
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;

@@ -18,6 +18,13 @@ each piece and what it needs.
   filled by the `auth` module.
 - **Look comes from the theme**: modules use only semantic token classes, so they fit any preset
   — or none.
+- **Generic UI comes from four kits** — `ui-core` (primitives, page vocabulary, status,
+  states, values, modal/sheet), `ui-data` (DataTable, pagination, toolbar, filters, menus),
+  `ui-forms` (FormField, search selects, line items, dropzone, stepper), `ui-feedback` (toasts,
+  global loader, confirm/reason dialogs, error boundary). They carry the Bingkai Navy component
+  design, default to Indonesian copy, and take every visible string as a prop. The `ui-gallery`
+  module renders all of them on one page (`/ui-gallery`). A module lists the kits it builds on
+  in `ui`; `add` and `upgrade` install missing ones first.
 
 Format and rules: [docs/MODULE_FORMAT.md](docs/MODULE_FORMAT.md).
 
@@ -39,8 +46,9 @@ node $ELCO_MODULES/scripts/module.mjs promote invoice --migration <file>   # pro
 
 A port is wired with `--port <Port>=<provider module>` (its ready-made adapter is used) or
 `--port <Port>=expr:<Go expression>` for an adapter the project writes in
-`apps/api/internal/modules/`. `add` refuses — and changes nothing — when a required port is not
-wired, a ui kit it builds on is missing, or the kernel version differs.
+`apps/api/internal/modules/`. `add` installs the ui kits a module lists that the project lacks, and
+refuses — changing nothing — when a required port is not wired or the project's kernel is older
+than the module's `requires_kernel`.
 
 **`modules.lock.json`** (commit it) records per module: version, the library commit it came
 from, port wiring, the hash of every file as the library rendered it, its migrations, and its
@@ -81,7 +89,7 @@ Scenarios:
 
 | Scenario | Proves |
 |---|---|
-| `full` | preset + ui-core + app-shell + users + auth + rbac (ports ← users) build, pass unit tests, migrate with golang-migrate, and work end to end: sign-in, users CRUD, deactivation ending a session, roles and permissions (403 without, granted immediately, Administrator protected), logout, SPA served |
+| `full` | preset + the four ui kits + app-shell + users + auth + rbac (ports ← users) + ui-gallery build, pass unit tests, migrate with golang-migrate, and work end to end: sign-in, users CRUD, deactivation ending a session, roles and permissions (403 without, granted immediately, Administrator protected), logout, SPA served |
 | `no-rbac` | users + auth without rbac: the kernel's default — any signed-in user passes `users.manage` |
 | `auth-alone` | auth runs on a UserStore the project wrote itself — no users module |
 | `users-alone` | users runs without any auth provider; its guarded routes refuse (401) |
@@ -93,4 +101,4 @@ and a testbed scenario covers it.
 ## Versions
 
 Each module has its own version, tagged `<id>/v<version>` (e.g. `auth/v0.1.0`). A module states
-the kernel version it is built against (`requires_kernel`).
+the minimum kernel version it needs (`requires_kernel`; the current kernel is 3).

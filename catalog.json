@@ -2,7 +2,7 @@
   "modules": [
     {
       "id": "app-shell",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "kind": "web",
       "title": "App shell",
       "summary": "The frame around protected pages: collapsible sidebar built from every module's nav, inset canvas, breadcrumb header, and slots for a user menu.",
@@ -13,7 +13,7 @@
         "Public sites, single-screen tools, or full-screen modes (a POS on a tablet): give those their own layout."
       ],
       "stacks": [],
-      "requires_kernel": 2,
+      "requires_kernel": 3,
       "provides": {
         "contracts": [],
         "kernel": []
@@ -27,7 +27,7 @@
     },
     {
       "id": "auth",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "kind": "fullstack",
       "title": "Authentication",
       "summary": "Email + password sign-in: JWT in an HttpOnly cookie (Bearer for non-browser clients), login/logout/me, failed-attempt limit, the frontend guard, sign-in page, and user menu. Fills the kernel's d.Auth.",
@@ -41,7 +41,7 @@
       "stacks": [
         "go"
       ],
-      "requires_kernel": 2,
+      "requires_kernel": 3,
       "provides": {
         "contracts": [],
         "kernel": [
@@ -60,13 +60,14 @@
         }
       ],
       "ui": [
-        "ui-core"
+        "ui-core",
+        "ui-forms"
       ],
       "owns_tables": []
     },
     {
       "id": "rbac",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "kind": "fullstack",
       "title": "Roles and permissions (RBAC)",
       "summary": "Who may do what: roles hold permissions that modules declare, users hold roles. Fills the kernel's d.Authz; Roles page with a per-module permission editor and members; Administrator role with every permission.",
@@ -81,7 +82,7 @@
       "stacks": [
         "go"
       ],
-      "requires_kernel": 2,
+      "requires_kernel": 3,
       "provides": {
         "contracts": [],
         "kernel": [
@@ -102,7 +103,10 @@
         }
       ],
       "ui": [
-        "ui-core"
+        "ui-core",
+        "ui-data",
+        "ui-forms",
+        "ui-feedback"
       ],
       "owns_tables": [
         "roles",
@@ -112,18 +116,18 @@
     },
     {
       "id": "ui-core",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "kind": "ui",
       "title": "UI core kit",
-      "summary": "The shadcn primitives and generic building blocks most screens need: page header, data table, pagination, form field, empty/error states, confirm dialog.",
+      "summary": "Bingkai Navy foundation every screen uses: the restyled shadcn primitives, page layout (Page, PageHeader, SectionCard, SummaryCard), StatusBadge with fixed tones, Notice, empty/error/404 states, skeletons, DescriptionList, Money/Qty/DocNumber, Modal, FormSheet, and id-ID formatters.",
       "when_to_use": [
-        "Any project with list, detail, or form screens — most library modules with a frontend build on it."
+        "Any project with screens — every other kit and every module with a frontend builds on it."
       ],
       "when_not_to_use": [
-        "A one-page site with no data screens: the scaffold's starter primitives are enough."
+        "Never skipped when a module has a frontend."
       ],
       "stacks": [],
-      "requires_kernel": 1,
+      "requires_kernel": 3,
       "provides": {
         "contracts": [],
         "kernel": []
@@ -134,8 +138,112 @@
       "owns_tables": []
     },
     {
+      "id": "ui-data",
+      "version": "0.1.0",
+      "kind": "ui",
+      "title": "UI data kit",
+      "summary": "Lists and tables: DataTable (sort, selection with a bulk-action bar, column chooser, built-in loading/empty/error), Pagination, Toolbar with filter chips, FilterBar, SearchInput (debounced), ActionMenu (⋯), NavTabs.",
+      "when_to_use": [
+        "Any screen that lists records."
+      ],
+      "when_not_to_use": [
+        "A screen with no list or table."
+      ],
+      "stacks": [],
+      "requires_kernel": 3,
+      "provides": {
+        "contracts": [],
+        "kernel": []
+      },
+      "permissions": [],
+      "ports": [],
+      "ui": [
+        "ui-core"
+      ],
+      "owns_tables": []
+    },
+    {
+      "id": "ui-feedback",
+      "version": "0.1.0",
+      "kind": "ui",
+      "title": "UI feedback kit",
+      "summary": "Telling people what happened: toasts (notify), ConfirmDialog, ReasonDialog, a global loading bar for running requests, and an error boundary with a crash card — mounted once through its provider.",
+      "when_to_use": [
+        "Every app with a frontend: confirmations, toasts, and a crash screen instead of a blank page."
+      ],
+      "when_not_to_use": [
+        "Never skipped when a module asks for confirmation or shows toasts."
+      ],
+      "stacks": [],
+      "requires_kernel": 3,
+      "provides": {
+        "contracts": [],
+        "kernel": []
+      },
+      "permissions": [],
+      "ports": [],
+      "ui": [
+        "ui-core",
+        "ui-forms"
+      ],
+      "owns_tables": []
+    },
+    {
+      "id": "ui-forms",
+      "version": "0.1.0",
+      "kind": "ui",
+      "title": "UI forms kit",
+      "summary": "Forms: FormField, PasswordInput, SearchSelect, AsyncSearchSelect (server search, paging), HierarchicalSelect (tree), Segmented, MultiToggle, DateRangeFields, KeyValueEditor, FieldHint, FormSection/FieldGrid/StickyFooter/ActionRow, LineItemsEditor, FileDropzone, Stepper.",
+      "when_to_use": [
+        "Any screen where people enter or edit data."
+      ],
+      "when_not_to_use": [
+        "Read-only screens."
+      ],
+      "stacks": [],
+      "requires_kernel": 3,
+      "provides": {
+        "contracts": [],
+        "kernel": []
+      },
+      "permissions": [],
+      "ports": [],
+      "ui": [
+        "ui-core"
+      ],
+      "owns_tables": []
+    },
+    {
+      "id": "ui-gallery",
+      "version": "0.1.0",
+      "kind": "web",
+      "title": "UI gallery",
+      "summary": "A development page (/ui-gallery) showing every component of the four UI kits in all its variants — to check a preset, compare designs, and pick components.",
+      "when_to_use": [
+        "In the library's testbed and while developing: to see the kits under the project's theme."
+      ],
+      "when_not_to_use": [
+        "In a production app — it is a developer tool; remove it before release."
+      ],
+      "stacks": [],
+      "requires_kernel": 3,
+      "provides": {
+        "contracts": [],
+        "kernel": []
+      },
+      "permissions": [],
+      "ports": [],
+      "ui": [
+        "ui-core",
+        "ui-data",
+        "ui-forms",
+        "ui-feedback"
+      ],
+      "owns_tables": []
+    },
+    {
       "id": "users",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "kind": "fullstack",
       "title": "Users",
       "summary": "The people who can sign in: list, search, add, edit, deactivate, delete; first-user bootstrap from env. Offers UserClient; guarded by users.read / users.manage.",
@@ -148,7 +256,7 @@
       "stacks": [
         "go"
       ],
-      "requires_kernel": 2,
+      "requires_kernel": 3,
       "provides": {
         "contracts": [
           "UserClient"
@@ -161,7 +269,10 @@
       ],
       "ports": [],
       "ui": [
-        "ui-core"
+        "ui-core",
+        "ui-data",
+        "ui-forms",
+        "ui-feedback"
       ],
       "owns_tables": [
         "users"
@@ -171,7 +282,7 @@
   "presets": [
     {
       "id": "bingkai-navy",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "title": "Bingkai Navy",
       "summary": "Dense back-office look: dark-navy frame around a light canvas, navy brand, Inter + Plus Jakarta Sans + Geist Mono, 14px base.",
       "when_to_use": [

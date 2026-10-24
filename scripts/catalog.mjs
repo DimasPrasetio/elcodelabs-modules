@@ -50,7 +50,7 @@ for (const { id, m } of modules) {
   const hasApi = Boolean(m.install?.api);
   if (hasApi !== Boolean(m.register?.go)) problem(at, "a module with api/ must have register.go, and only then");
   if (["fullstack", "web"].includes(m.kind) && !m.register?.web) problem(at, `a ${m.kind} module needs register.web`);
-  if (m.kind === "ui" && (m.register?.go || m.register?.web)) problem(at, "a ui kit registers nothing");
+  if (m.kind === "ui" && m.register?.go) problem(at, "a ui kit has no backend registration (at most a web provider)");
   for (const line of m.register?.go?.build ?? []) {
     for (const [, name] of line.matchAll(/\{\{port:(\w+)\}\}/g)) {
       if (!(m.ports ?? []).some((p) => p.name === name)) problem(at, `register uses undeclared port ${name}`);

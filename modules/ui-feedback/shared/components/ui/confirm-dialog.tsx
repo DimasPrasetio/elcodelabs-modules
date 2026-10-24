@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { Alert, AlertDescription } from "@/shared/components/primitives/alert";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -9,9 +10,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/shared/components/primitives/alert-dialog";
-import { Alert, AlertDescription } from "@/shared/components/primitives/alert";
 import { Button } from "@/shared/components/primitives/button";
-import { Spinner } from "@/shared/components/primitives/spinner";
 import { apiErrorMessage } from "@/shared/services/api-error";
 
 export interface ConfirmDialogProps {
@@ -19,23 +18,26 @@ export interface ConfirmDialogProps {
   onOpenChange: (open: boolean) => void;
   title: string;
   description?: ReactNode;
-  confirmLabel: string;
-  destructive?: boolean;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  /** "danger" for something that cannot be undone. */
+  tone?: "danger" | "primary";
   /**
-   * May be async; the dialog stays busy until it settles and closes on success. If it throws,
-   * the dialog stays open and shows the error (the API's message when there is one).
+   * May be async: the dialog stays busy until it settles and closes on success. If it throws,
+   * the dialog stays open and shows why (the API's message when there is one).
    */
   onConfirm: () => void | Promise<void>;
 }
 
-/** Asks before an action that is hard to undo. */
+/** Asks before an action that is hard to undo. "Batal" has focus, so Enter is the safe choice. */
 export function ConfirmDialog({
   open,
   onOpenChange,
   title,
   description,
-  confirmLabel,
-  destructive = false,
+  confirmLabel = "Konfirmasi",
+  cancelLabel = "Batal",
+  tone = "danger",
   onConfirm,
 }: ConfirmDialogProps) {
   const [busy, setBusy] = useState(false);
@@ -54,18 +56,19 @@ export function ConfirmDialog({
     }
   }
 
-  function change(next: boolean) {
-    if (busy) return;
-    if (!next) setError(null);
-    onOpenChange(next);
-  }
-
   return (
-    <AlertDialog open={open} onOpenChange={change}>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (busy) return;
+        if (!next) setError(null);
+        onOpenChange(next);
+      }}
+    >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
-          {description && <AlertDialogDescription>{description}</AlertDialogDescription>}
+          {description && <AlertDialogDescription className="text-base text-foreground">{description}</AlertDialogDescription>}
         </AlertDialogHeader>
         {error && (
           <Alert variant="destructive">
@@ -73,9 +76,12 @@ export function ConfirmDialog({
           </Alert>
         )}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
-          <Button variant={destructive ? "destructive" : "default"} disabled={busy} onClick={confirm}>
-            {busy && <Spinner />}
+          <AlertDialogCancel asChild>
+            <Button variant="outline" size="sm" disabled={busy}>
+              {cancelLabel}
+            </Button>
+          </AlertDialogCancel>
+          <Button variant={tone === "danger" ? "destructive" : "default"} size="sm" loading={busy} onClick={confirm}>
             {confirmLabel}
           </Button>
         </AlertDialogFooter>

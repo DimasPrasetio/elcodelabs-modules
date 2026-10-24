@@ -31,5 +31,11 @@ grouped by module, members with add/remove), nav "Roles" in "Settings" shown wit
 `rbac.manage`. Its `provider` supplies `@/shared/access` — `useCan` and `NavItem.permission` in
 every module answer from the user's real permissions, reloaded on the `session:changed` app event.
 
+## Changes
+
+- **0.2.0** — needs kernel 3. Built on the four UI kits (data table, section cards, modal,
+  user picker with server search, confirm dialogs, toasts); Indonesian copy, API messages, and
+  permission descriptions. Migration 002 translates the Administrator role's description.
+
 **Not here:** per-record access (e.g. only your branch's data) — that belongs in the module that
 owns the data; permission groups/inheritance.

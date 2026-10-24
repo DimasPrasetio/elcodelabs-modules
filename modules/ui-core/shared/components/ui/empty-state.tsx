@@ -4,23 +4,21 @@ import { Inbox } from "lucide-react";
 export interface EmptyStateProps {
   title: string;
   description?: ReactNode;
-  icon?: ComponentType<{ className?: string }>;
-  /** The next step, e.g. a "Create the first …" button. */
+  icon?: ComponentType<{ className?: string; size?: number }>;
+  /** The next step, e.g. "Buat produk pertama". */
   action?: ReactNode;
 }
 
-/** Shown when there is nothing to list — always pointing at what to do next. */
+/** Nothing to show — always an invitation to the next action. */
 export function EmptyState({ title, description, icon: Icon = Inbox, action }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-      <div className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-        <Icon className="size-5" />
-      </div>
-      <div className="space-y-1">
-        <p className="font-medium">{title}</p>
-        {description && <p className="max-w-sm text-sm text-muted-foreground">{description}</p>}
-      </div>
-      {action}
+    <div className="flex flex-col items-center px-6 py-14 text-center">
+      <span className="mb-3 flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        <Icon size={20} aria-hidden />
+      </span>
+      <p className="text-base font-semibold text-foreground">{title}</p>
+      {description && <p className="mx-auto mt-1 max-w-[420px] text-sm text-muted-foreground">{description}</p>}
+      {action && <div className="mt-4 flex justify-center">{action}</div>}
     </div>
   );
 }

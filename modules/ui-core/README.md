@@ -1,23 +1,39 @@
 # ui-core
 
-Shared UI kit, installed into `apps/web/src/shared/`. Nothing is registered: modules import it.
+The foundation kit, in Bingkai Navy's component design (mini-erp-v2's visual design, rewritten
+generic). Installed into `apps/web/src/shared/`; nothing domain-specific, every text overridable,
+Indonesian by default. Needs kernel 3 (the scaffold's restyled `button`, `input`, `card`,
+`dialog` and `shared/lib/field-classes.ts`).
 
-**Primitives** (`shared/components/primitives/`, shadcn `new-york` as the CLI writes them):
-alert, alert-dialog, avatar, breadcrumb, checkbox, collapsible, dropdown-menu, separator, sheet,
-table, textarea, tooltip. Two deviations from the CLI output, both to honor the token contract:
-overlays use `bg-foreground/50` instead of `bg-black/50`, and table cells take their vertical
-padding from `--row-py` (density).
+**Primitives** (`shared/components/primitives/`, shadcn `new-york`, restyled to the tokens):
+alert, alert-dialog, avatar, breadcrumb, checkbox, collapsible, dropdown-menu, kbd,
+native-select, popover, progress, radio-group, scroll-area, separator, sheet, switch, table,
+tabs, textarea, toggle, toggle-group, tooltip. Every field control uses `FIELD` (36px, card
+background, soft shadow, hover border, soft focus ring); overlays use `--shadow-pop`; tables have
+a quiet header on `--background` and rows padded by `--row-py`.
 
-**Building blocks** (`shared/components/ui/`):
+**Components** (`shared/components/ui/`):
 
 | Component | Use |
 |---|---|
-| `PageHeader` | The page's one `<h1>`, description, actions (main action last) |
-| `DataTable` | Columns + rows, sticky header, skeleton while loading, empty state, clickable rows (keyboard too) |
-| `PaginationBar` | "1–25 of 128" + previous/next, from the API's `meta` |
-| `FormField` | Label + control + hint/error, ids and `aria-*` wired |
-| `EmptyState` | Nothing to show — with the next action |
-| `ErrorState` | A failed load with the API's message and "Try again" |
-| `ConfirmDialog` | Confirmation before a hard-to-undo action; async-aware |
+| `Page`, `PageColumns` | Page root (24px rhythm); two columns for a record page |
+| `PageHeader` | The page's one `<h1>`, meta, subtitle, description, actions, band |
+| `SectionCard` | Titled, border-only card (or plain section) |
+| `SummaryCard` | KPI: label, big tabular number, hint or delta; clickable |
+| `StatusBadge` | Status pill with a dot; tone = `success · warning · danger · info · neutral · muted` |
+| `Notice` | Inline message box by tone |
+| `EmptyState` · `ErrorState` · `NotFoundState` | Empty (with next action), failed load ("Coba lagi"), 404 |
+| `TableSkeleton` · `CardSkeleton` · `DetailSkeleton` | Loading shaped like the result |
+| `DescriptionList` | Label–value grid, "–" for empty |
+| `Money` · `Qty` · `DocNumber` | Rupiah (accounting mode), quantities, copyable codes |
+| `Modal` · `FormSheet` | Dialog for ≤ 6 fields; right panel for master data and record actions |
 
-Built only on the scaffold's primitives, `cn`, `lucide-react`, and `@/shared/types/api`.
+**Lib:** `shared/lib/format.ts` (`formatIDR`, `formatNumber`, `formatDate`, `formatDateTime`,
+`todayISO`), `shared/lib/tone.ts` (`Tone`).
+
+## Changes
+
+- **0.2.0** — needs kernel 3. Bingkai Navy component design; adds primitives (popover,
+  native-select, radio-group, switch, tabs, …) and the components above. `DataTable` and
+  pagination moved to `ui-data`, `FormField` to `ui-forms`, `ConfirmDialog` to `ui-feedback` —
+  add those kits when upgrading (`module.mjs add` takes the unchanged files over).

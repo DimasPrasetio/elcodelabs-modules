@@ -15,6 +15,6 @@ export const rbacModule: FrontendModule = {
     { path: RBAC_PATHS.roles, element: <RolesPage /> },
     { path: "/roles/:id", element: <RoleDetailPage /> },
   ],
-  nav: [{ label: "Roles", to: RBAC_PATHS.roles, icon: ShieldCheck, group: "Settings", order: 910, permission: "rbac.manage" }],
+  nav: [{ label: "Peran", to: RBAC_PATHS.roles, icon: ShieldCheck, group: "Pengaturan", order: 910, permission: "rbac.manage" }],
   provider: RbacAccessProvider,
 };

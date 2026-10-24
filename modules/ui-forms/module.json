@@ -1,0 +1,34 @@
+{
+  "id": "ui-forms",
+  "version": "0.1.0",
+  "kind": "ui",
+  "title": "UI forms kit",
+  "summary": "Forms: FormField, PasswordInput, SearchSelect, AsyncSearchSelect (server search, paging), HierarchicalSelect (tree), Segmented, MultiToggle, DateRangeFields, KeyValueEditor, FieldHint, FormSection/FieldGrid/StickyFooter/ActionRow, LineItemsEditor, FileDropzone, Stepper.",
+  "when_to_use": [
+    "Any screen where people enter or edit data."
+  ],
+  "when_not_to_use": [
+    "Read-only screens."
+  ],
+  "stacks": [],
+  "requires_kernel": 3,
+  "provides": {
+    "contracts": [],
+    "kernel": []
+  },
+  "ports": [],
+  "ui": [
+    "ui-core"
+  ],
+  "owns_tables": [],
+  "env": [],
+  "routes": {
+    "api": [],
+    "web": []
+  },
+  "npm_dependencies": {},
+  "install": {
+    "shared": "apps/web/src/shared"
+  },
+  "register": {}
+}

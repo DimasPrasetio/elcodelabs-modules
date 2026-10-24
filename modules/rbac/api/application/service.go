@@ -99,7 +99,7 @@ func (s *Service) clean(in RoleInput) (RoleInput, error) {
 			continue
 		}
 		seen[p] = true
-		v.Check(known[p], "permissions", "unknown permission "+p)
+		v.Check(known[p], "permissions", "izin tidak dikenal: "+p)
 		perms = append(perms, p)
 	}
 	sort.Strings(perms)
@@ -126,7 +126,7 @@ func (s *Service) UpdateRole(ctx context.Context, id int64, in RoleInput) (domai
 		return domain.Role{}, notFound(err)
 	}
 	if current.IsSystem {
-		return domain.Role{}, apperror.Conflict("The Administrator role always has every permission and cannot be changed")
+		return domain.Role{}, apperror.Conflict("Peran Administrator selalu memegang semua izin dan tidak dapat diubah")
 	}
 	if in, err = s.clean(in); err != nil {
 		return domain.Role{}, err
@@ -144,7 +144,7 @@ func (s *Service) DeleteRole(ctx context.Context, id int64) error {
 		return notFound(err)
 	}
 	if r.IsSystem {
-		return apperror.Conflict("The Administrator role cannot be deleted")
+		return apperror.Conflict("Peran Administrator tidak dapat dihapus")
 	}
 	if err := s.repo.DeleteRole(ctx, id); err != nil {
 		return notFound(err)
@@ -183,7 +183,7 @@ func (s *Service) AddMember(ctx context.Context, roleID, userID int64) error {
 		return err
 	}
 	if _, err := s.users.Get(ctx, userID); errors.Is(err, ports.ErrUserNotFound) {
-		return apperror.NotFound("User not found")
+		return apperror.NotFound("Pengguna tidak ditemukan")
 	} else if err != nil {
 		return err
 	}
@@ -207,7 +207,7 @@ func (s *Service) RemoveMember(ctx context.Context, roleID, userID int64) error 
 			return err
 		}
 		if len(ids) <= 1 {
-			return apperror.Conflict("At least one user must keep the Administrator role")
+			return apperror.Conflict("Minimal satu pengguna harus tetap memegang peran Administrator")
 		}
 	}
 	if err := s.repo.RemoveMember(ctx, roleID, userID); err != nil {
@@ -296,14 +296,14 @@ func (s *Service) invalidate() {
 
 func notFound(err error) error {
 	if errors.Is(err, ErrNotFound) {
-		return apperror.NotFound("Role not found")
+		return apperror.NotFound("Peran tidak ditemukan")
 	}
 	return err
 }
 
 func nameTaken(err error) error {
 	if errors.Is(err, ErrNameTaken) {
-		return apperror.Validation([]validator.FieldError{{Field: "name", Message: "is already in use"}})
+		return apperror.Validation([]validator.FieldError{{Field: "name", Message: "sudah dipakai"}})
 	}
 	return err
 }

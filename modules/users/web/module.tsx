@@ -11,5 +11,5 @@ export const USERS_PATHS = {
 export const usersModule: FrontendModule = {
   id: "users",
   protected: [{ path: USERS_PATHS.list, element: <UsersPage /> }],
-  nav: [{ label: "Users", to: USERS_PATHS.list, icon: Users, group: "Settings", order: 900, permission: "users.read" }],
+  nav: [{ label: "Pengguna", to: USERS_PATHS.list, icon: Users, group: "Pengaturan", order: 900, permission: "users.read" }],
 };

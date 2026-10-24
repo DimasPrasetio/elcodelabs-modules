@@ -17,7 +17,7 @@ import (
 )
 
 // errInvalid is the one answer to every failed sign-in, so it never tells which part was wrong.
-var errInvalid = apperror.Unauthorized("Invalid email or password")
+var errInvalid = apperror.Unauthorized("Email atau kata sandi salah")
 
 // dummyHash is compared against when the email is unknown, so an unknown email takes as long
 // as a wrong password and response time does not reveal which accounts exist.
@@ -51,7 +51,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (Session, e
 		return Session{}, err
 	}
 	if !s.limiter.Allow(email) {
-		return Session{}, apperror.New(http.StatusTooManyRequests, "Too many failed sign-in attempts. Try again later.")
+		return Session{}, apperror.New(http.StatusTooManyRequests, "Terlalu banyak percobaan masuk yang gagal. Coba lagi nanti.")
 	}
 
 	cred, err := s.users.FindCredentials(ctx, email)
@@ -68,7 +68,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (Session, e
 		return Session{}, errInvalid
 	}
 	if !cred.IsActive {
-		return Session{}, apperror.Forbidden("This account is deactivated")
+		return Session{}, apperror.Forbidden("Akun ini dinonaktifkan")
 	}
 	s.limiter.Reset(email)
 
@@ -88,11 +88,11 @@ func (s *Service) Login(ctx context.Context, email, password string) (Session, e
 func (s *Service) Resolve(ctx context.Context, token string) (ports.User, error) {
 	id, err := s.tokens.Verify(token)
 	if err != nil {
-		return ports.User{}, apperror.Unauthorized("Session expired or invalid")
+		return ports.User{}, apperror.Unauthorized("Sesi berakhir atau tidak valid")
 	}
 	u, err := s.users.FindUser(ctx, id)
 	if errors.Is(err, ports.ErrUserNotFound) || (err == nil && !u.IsActive) {
-		return ports.User{}, apperror.Unauthorized("Session expired or invalid")
+		return ports.User{}, apperror.Unauthorized("Sesi berakhir atau tidak valid")
 	}
 	return u, err
 }

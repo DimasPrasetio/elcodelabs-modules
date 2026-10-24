@@ -27,7 +27,7 @@ type Module struct {
 // with RBAC_BOOTSTRAP_ADMIN_EMAIL (default: USERS_BOOTSTRAP_EMAIL) — so installing rbac never
 // locks everyone out. A failed bootstrap is logged, not fatal; the next start tries again.
 func New(d *kernel.Deps, users ports.UserDirectory) (*Module, error) {
-	d.Authz.Declare(kernel.Permission{Name: presentation.PermManage, Module: "rbac", Description: "Manage roles, their permissions, and who holds them"})
+	d.Authz.Declare(kernel.Permission{Name: presentation.PermManage, Module: "rbac", Description: "Mengelola peran, izinnya, dan pemegangnya"})
 	svc := application.NewService(infrastructure.NewRepository(d.DB), users, d.Authz.Permissions)
 	m := &Module{svc: svc, auth: d.Auth, handler: presentation.NewHandler(svc, d.Auth, d.Authz)}
 

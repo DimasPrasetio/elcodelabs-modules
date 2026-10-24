@@ -1,0 +1,26 @@
+{
+  "id": "ui-gallery",
+  "version": "0.1.0",
+  "kind": "web",
+  "title": "UI gallery",
+  "summary": "A development page (/ui-gallery) showing every component of the four UI kits in all its variants — to check a preset, compare designs, and pick components.",
+  "when_to_use": [
+    "In the library's testbed and while developing: to see the kits under the project's theme."
+  ],
+  "when_not_to_use": [
+    "In a production app — it is a developer tool; remove it before release."
+  ],
+  "stacks": [],
+  "requires_kernel": 3,
+  "provides": { "contracts": [], "kernel": [] },
+  "ports": [],
+  "ui": ["ui-core", "ui-data", "ui-forms", "ui-feedback"],
+  "owns_tables": [],
+  "env": [],
+  "routes": { "api": [], "web": ["/ui-gallery"] },
+  "npm_dependencies": {},
+  "install": { "web": "apps/web/src/modules/ui-gallery" },
+  "register": {
+    "web": { "import": "@/modules/ui-gallery/module", "export": "uiGalleryModule" }
+  }
+}

@@ -1,6 +1,6 @@
 {
   "id": "rbac",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "kind": "fullstack",
   "title": "Roles and permissions (RBAC)",
   "summary": "Who may do what: roles hold permissions that modules declare, users hold roles. Fills the kernel's d.Authz; Roles page with a per-module permission editor and members; Administrator role with every permission.",
@@ -12,9 +12,16 @@
     "Every signed-in user may do everything — without rbac that is already the policy.",
     "Access that depends on the record itself (only your branch's invoices): rbac grants per action, not per row — build that in the module that owns the data."
   ],
-  "stacks": ["go"],
-  "requires_kernel": 2,
-  "provides": { "contracts": [], "kernel": ["authz"] },
+  "stacks": [
+    "go"
+  ],
+  "requires_kernel": 3,
+  "provides": {
+    "contracts": [],
+    "kernel": [
+      "authz"
+    ]
+  },
   "ports": [
     {
       "name": "UserDirectory",
@@ -28,13 +35,29 @@
       }
     }
   ],
-  "ui": ["ui-core"],
-  "permissions": [
-    { "name": "rbac.manage", "description": "Manage roles, their permissions, and who holds them" }
+  "ui": [
+    "ui-core",
+    "ui-data",
+    "ui-forms",
+    "ui-feedback"
   ],
-  "owns_tables": ["roles", "role_permissions", "user_roles"],
+  "permissions": [
+    {
+      "name": "rbac.manage",
+      "description": "Mengelola peran, izinnya, dan pemegangnya"
+    }
+  ],
+  "owns_tables": [
+    "roles",
+    "role_permissions",
+    "user_roles"
+  ],
   "env": [
-    { "name": "RBAC_BOOTSTRAP_ADMIN_EMAIL", "required": false, "description": "Gets the Administrator role while nobody holds it (default: USERS_BOOTSTRAP_EMAIL)." }
+    {
+      "name": "RBAC_BOOTSTRAP_ADMIN_EMAIL",
+      "required": false,
+      "description": "Gets the Administrator role while nobody holds it (default: USERS_BOOTSTRAP_EMAIL)."
+    }
   ],
   "routes": {
     "api": [
@@ -50,7 +73,10 @@
       "DELETE /api/v1/rbac/roles/{id}/members/{userId}",
       "GET /api/v1/rbac/users"
     ],
-    "web": ["/roles", "/roles/:id"]
+    "web": [
+      "/roles",
+      "/roles/:id"
+    ]
   },
   "npm_dependencies": {},
   "install": {
@@ -66,9 +92,16 @@
         "\treturn err",
         "}"
       ],
-      "routes": ["rbacModule.Routes(mux)"],
-      "after": ["d.Authz.Provide(rbacModule.Authorizer())"]
+      "routes": [
+        "rbacModule.Routes(mux)"
+      ],
+      "after": [
+        "d.Authz.Provide(rbacModule.Authorizer())"
+      ]
     },
-    "web": { "import": "@/modules/rbac/module", "export": "rbacModule" }
+    "web": {
+      "import": "@/modules/rbac/module",
+      "export": "rbacModule"
+    }
   }
 }

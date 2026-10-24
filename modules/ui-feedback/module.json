@@ -1,0 +1,43 @@
+{
+  "id": "ui-feedback",
+  "version": "0.1.0",
+  "kind": "ui",
+  "title": "UI feedback kit",
+  "summary": "Telling people what happened: toasts (notify), ConfirmDialog, ReasonDialog, a global loading bar for running requests, and an error boundary with a crash card — mounted once through its provider.",
+  "when_to_use": [
+    "Every app with a frontend: confirmations, toasts, and a crash screen instead of a blank page."
+  ],
+  "when_not_to_use": [
+    "Never skipped when a module asks for confirmation or shows toasts."
+  ],
+  "stacks": [],
+  "requires_kernel": 3,
+  "provides": {
+    "contracts": [],
+    "kernel": []
+  },
+  "ports": [],
+  "ui": [
+    "ui-core",
+    "ui-forms"
+  ],
+  "owns_tables": [],
+  "env": [],
+  "routes": {
+    "api": [],
+    "web": []
+  },
+  "npm_dependencies": {
+    "sonner": "^2.0.8"
+  },
+  "install": {
+    "shared": "apps/web/src/shared",
+    "web": "apps/web/src/modules/ui-feedback"
+  },
+  "register": {
+    "web": {
+      "import": "@/modules/ui-feedback/module",
+      "export": "uiFeedbackModule"
+    }
+  }
+}

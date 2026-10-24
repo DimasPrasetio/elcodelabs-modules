@@ -23,7 +23,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync,
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyPreset, installModule } from "./lib/install.mjs";
+import { applyPreset, installModule as installOne, missingKits } from "./lib/install.mjs";
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
@@ -77,6 +77,12 @@ function build(dir) {
     && run("go", ["test", "./..."], api, "go test ./... (module unit tests, ports faked)")
     && run("npm", ["run", "build:web"], dir, "build:web (tsc + vite)")
     && run("npm", ["run", "build:api"], dir, "build:api");
+}
+
+/** Installs id after the ui kits it needs — what module.mjs add does. */
+function installModule(lib, dir, id, opts) {
+  for (const kit of missingKits(lib, dir, id)) installOne(lib, dir, kit);
+  return installOne(lib, dir, id, opts);
 }
 
 // --- running the API ---------------------------------------------------------------------
@@ -181,18 +187,19 @@ function freshDatabase(dir, db, name) {
 // --- scenarios ---------------------------------------------------------------------------
 
 async function full() {
-  log("\n=== full: bingkai-navy + ui-core + app-shell + users + auth + rbac ===");
+  log("\n=== full: bingkai-navy + ui kits + app-shell + users + auth + rbac + ui-gallery ===");
   const dir = scaffold("full");
   try {
     applyPreset(LIB, dir, "bingkai-navy");
     for (const [id, opts] of [
-      ["ui-core"], ["app-shell"], ["users"],
+      ["app-shell"], ["users"],
       ["auth", { ports: { UserStore: "users" } }],
       ["rbac", { ports: { UserDirectory: "users" } }],
+      ["ui-gallery"],
     ]) {
       installModule(LIB, dir, id, opts);
     }
-    pass("preset + 5 modules installed through the markers");
+    pass("preset + 4 ui kits + app-shell, users, auth, rbac, ui-gallery installed through the markers");
     const reg = readFileSync(join(dir, "apps/api/internal/modules/registry.go"), "utf8");
     expect("registry wires auth's UserStore port to users through an adapter",
       reg.includes("auth.New(d, authUserStore{users: usersModule.Client()})") && existsSync(join(dir, "apps/api/internal/modules/adapter_auth_userstore.go")));
@@ -304,7 +311,6 @@ async function noRbac() {
   let db;
   const name = `elco_testbed_norbac_${Date.now()}`;
   try {
-    installModule(LIB, dir, "ui-core");
     installModule(LIB, dir, "users");
     installModule(LIB, dir, "auth", { ports: { UserStore: "users" } });
     pass("users + auth installed, no rbac");
@@ -338,7 +344,6 @@ async function authAlone() {
   const dir = scaffold("auth-alone");
   let api;
   try {
-    installModule(LIB, dir, "ui-core");
     const goModule = readFileSync(join(dir, "apps/api/go.mod"), "utf8").match(/^module (\S+)/m)[1];
     installModule(LIB, dir, "auth", { ports: { UserStore: { expr: "projectUserStore{}" } } });
     writeFileSync(join(dir, "apps/api/internal/modules/adapter_auth_project.go"),
@@ -365,9 +370,8 @@ async function usersAlone() {
   const dir = scaffold("users-alone");
   let api;
   try {
-    installModule(LIB, dir, "ui-core");
     installModule(LIB, dir, "users");
-    pass("users installed alone");
+    pass("users installed alone (with its ui kits)");
     if (!build(dir)) return;
     api = await startApi(dir, 18093, {});
     const r = await client(18093).call("GET", "/api/v1/users");
@@ -401,8 +405,8 @@ async function lifecycle() {
     g("add", "-A");
     g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "library v1");
 
-    let r = cli("add", "ui-core", "users");
-    expect("add ui-core users", r.status === 0, r.stderr);
+    let r = cli("add", "users");
+    expect("add users brings its four ui kits along", r.status === 0 && ["ui-core", "ui-data", "ui-forms", "ui-feedback"].every((k) => r.stdout.includes(`✓ ${k} `)), r.stderr || r.stdout);
     r = cli("add", "auth");
     expect("add auth without wiring its port is refused, project untouched",
       r.status === 1 && r.stderr.includes("--port UserStore=") && !existsSync(join(dir, "apps/api/internal/modules/auth")), r.stderr);
@@ -411,12 +415,12 @@ async function lifecycle() {
     r = cli("preset", "bingkai-navy");
     expect("preset bingkai-navy", r.status === 0, r.stderr);
     let st = JSON.parse(cli("status", "--json").stdout);
-    expect("status: everything managed, nothing changed", st.length === 4 && st.every((s) => s.status === "managed" && !s.modified.length), st);
+    expect("status: everything managed, nothing changed", st.length === 7 && st.every((s) => s.status === "managed" && !s.modified.length), st);
 
     // The project customizes a module; the library ships a change elsewhere in the same file.
     const page = join(dir, "apps/web/src/modules/users/pages/UsersPage.tsx");
-    edit(page, "People who can sign in to this app.", "Staff accounts for the warehouse.");
-    edit(join(lib, "modules/users/web/pages/UsersPage.tsx"), "const LIMIT = 25;", "const LIMIT = 20;");
+    edit(page, "Orang yang bisa masuk ke aplikasi ini.", "Akun staf gudang.");
+    edit(join(lib, "modules/users/web/pages/UsersPage.tsx"), 'noun="pengguna"', 'noun="akun"');
     writeFileSync(join(lib, "modules/users/migrations/002_add_users_phone.up.sql"), "ALTER TABLE users ADD COLUMN phone VARCHAR(30) NULL;\n");
     writeFileSync(join(lib, "modules/users/migrations/002_add_users_phone.down.sql"), "ALTER TABLE users DROP COLUMN phone;\n");
     bump("0.9.0");
@@ -430,13 +434,13 @@ async function lifecycle() {
     const merged = readFileSync(page, "utf8");
     expect("upgrade users merges cleanly (exit 0)", r.status === 0, r.stdout + r.stderr);
     expect("both the project's change and the library's are in the file",
-      merged.includes("Staff accounts for the warehouse.") && merged.includes("const LIMIT = 20;"));
+      merged.includes("Akun staf gudang.") && merged.includes('noun="akun"'));
     expect("the new migration is added, the applied one untouched",
       readdirSync(join(dir, "apps/api/migrations")).filter((f) => f.includes("users_add_users_phone")).length === 2);
     if (!build(dir)) return;
 
     // The library changes the very line the project changed.
-    edit(join(lib, "modules/users/web/pages/UsersPage.tsx"), "People who can sign in to this app.", "Everyone with an account.");
+    edit(join(lib, "modules/users/web/pages/UsersPage.tsx"), "Orang yang bisa masuk ke aplikasi ini.", "Semua pemilik akun.");
     bump("0.10.0");
     g("add", "-A");
     g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "users 0.3.0");

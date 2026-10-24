@@ -1,6 +1,6 @@
 {
   "id": "users",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "kind": "fullstack",
   "title": "Users",
   "summary": "The people who can sign in: list, search, add, edit, deactivate, delete; first-user bootstrap from env. Offers UserClient; guarded by users.read / users.manage.",
@@ -13,7 +13,7 @@
   "stacks": [
     "go"
   ],
-  "requires_kernel": 2,
+  "requires_kernel": 3,
   "provides": {
     "contracts": [
       "UserClient"
@@ -22,16 +22,19 @@
   },
   "ports": [],
   "ui": [
-    "ui-core"
+    "ui-core",
+    "ui-data",
+    "ui-forms",
+    "ui-feedback"
   ],
   "permissions": [
     {
       "name": "users.read",
-      "description": "View the list of users"
+      "description": "Melihat daftar pengguna"
     },
     {
       "name": "users.manage",
-      "description": "Add, edit, deactivate, and delete users"
+      "description": "Menambah, mengubah, menonaktifkan, dan menghapus pengguna"
     }
   ],
   "owns_tables": [

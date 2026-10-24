@@ -1,29 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Pencil, ShieldCheck, Trash2, UserPlus, X } from "lucide-react";
-import { Alert, AlertDescription } from "@/shared/components/primitives/alert";
-import { Badge } from "@/shared/components/primitives/badge";
 import { Button } from "@/shared/components/primitives/button";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/shared/components/primitives/card";
 import { Checkbox } from "@/shared/components/primitives/checkbox";
-import { Skeleton } from "@/shared/components/primitives/skeleton";
-import { Spinner } from "@/shared/components/primitives/spinner";
 import { ConfirmDialog } from "@/shared/components/ui/confirm-dialog";
 import { EmptyState } from "@/shared/components/ui/empty-state";
 import { ErrorState } from "@/shared/components/ui/error-state";
+import { Notice } from "@/shared/components/ui/notice";
+import { Page, PageColumns } from "@/shared/components/ui/page";
 import { PageHeader } from "@/shared/components/ui/page-header";
+import { SectionCard } from "@/shared/components/ui/section-card";
+import { DetailSkeleton } from "@/shared/components/ui/skeletons";
+import { StatusBadge } from "@/shared/components/ui/status-badge";
+import { notify } from "@/shared/lib/notify";
 import { apiErrorMessage } from "@/shared/services/api-error";
 import { AddMemberDialog } from "@/modules/rbac/components/AddMemberDialog";
 import { RoleFormDialog } from "@/modules/rbac/components/RoleFormDialog";
 import { RBAC_PATHS } from "@/modules/rbac/paths";
-import {
-  deleteRole,
-  fetchCatalog,
-  fetchMembers,
-  fetchRole,
-  removeMember,
-  updateRole,
-} from "@/modules/rbac/services/rbac.service";
+import { deleteRole, fetchCatalog, fetchMembers, fetchRole, removeMember, updateRole } from "@/modules/rbac/services/rbac.service";
 import { WILDCARD } from "@/modules/rbac/types/rbac";
 import type { Permission, RbacUser, Role } from "@/modules/rbac/types/rbac";
 
@@ -88,6 +82,7 @@ export default function RoleDetailPage() {
       const updated = await updateRole(role.id, { name: role.name, description: role.description, permissions: [...selected] });
       setRole(updated);
       setSelected(new Set(updated.permissions));
+      notify.success("Izin peran disimpan");
     } catch (err) {
       setSaveError(apiErrorMessage(err));
     } finally {
@@ -96,126 +91,115 @@ export default function RoleDetailPage() {
   }
 
   if (error) return <ErrorState message={error} onRetry={load} />;
-  if (!role) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    );
-  }
+  if (!role) return <DetailSkeleton />;
 
   const all = role.permissions.includes(WILDCARD);
 
   return (
-    <>
-      <Button variant="ghost" size="sm" asChild className="-ml-2 mb-2">
-        <Link to={RBAC_PATHS.roles}>
-          <ArrowLeft />
-          Roles
-        </Link>
-      </Button>
-      <PageHeader
-        title={role.name}
-        description={role.description || undefined}
-        meta={role.is_system && <Badge variant="secondary">System</Badge>}
-        actions={
-          !role.is_system && (
-            <>
-              <Button variant="outline" onClick={() => setDeleting(true)}>
-                <Trash2 />
-                Delete
-              </Button>
-              <Button variant="outline" onClick={() => setEditing(true)}>
-                <Pencil />
-                Edit
-              </Button>
-            </>
-          )
-        }
-      />
-
-      <div className="grid gap-6 lg:grid-cols-[3fr_2fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Permissions</CardTitle>
-            <CardDescription>
-              {all ? "This role holds every permission, including ones modules add later." : "What members of this role may do, by module."}
-            </CardDescription>
-            {!all && (
-              <CardAction>
-                <Button size="sm" disabled={!dirty || saving} onClick={savePermissions}>
-                  {saving && <Spinner />}
-                  Save
+    <Page>
+      <div>
+        <Button variant="ghost" size="sm" asChild className="-ml-2 mb-2">
+          <Link to={RBAC_PATHS.roles}>
+            <ArrowLeft />
+            Peran
+          </Link>
+        </Button>
+        <PageHeader
+          title={role.name}
+          description={role.description || undefined}
+          meta={role.is_system && <StatusBadge tone="info">Sistem</StatusBadge>}
+          actions={
+            !role.is_system && (
+              <>
+                <Button variant="outline" onClick={() => setDeleting(true)}>
+                  <Trash2 />
+                  Hapus
                 </Button>
-              </CardAction>
-            )}
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {saveError && (
-              <Alert variant="destructive">
-                <AlertDescription>{saveError}</AlertDescription>
-              </Alert>
-            )}
-            {byModule(catalog).map(([module, perms]) => (
-              <fieldset key={module} className="space-y-3">
-                <legend className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">{module}</legend>
-                {perms.map((p) => (
-                  <label key={p.name} className="flex items-start gap-3">
-                    <Checkbox
-                      className="mt-0.5"
-                      checked={all || selected.has(p.name)}
-                      disabled={all}
-                      onCheckedChange={(v) => toggle(p.name, v === true)}
-                    />
-                    <span className="grid gap-0.5">
-                      <span className="text-sm">{p.description}</span>
-                      <span className="font-mono text-xs text-muted-foreground">{p.name}</span>
-                    </span>
-                  </label>
-                ))}
-              </fieldset>
-            ))}
-          </CardContent>
-        </Card>
+                <Button variant="outline" onClick={() => setEditing(true)}>
+                  <Pencil />
+                  Ubah
+                </Button>
+              </>
+            )
+          }
+        />
+      </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Members</CardTitle>
-            <CardDescription>{members.length === 1 ? "1 user" : `${members.length} users`}</CardDescription>
-            <CardAction>
+      <PageColumns
+        main={
+          <SectionCard
+            title="Izin"
+            description={all ? "Peran ini memegang semua izin, termasuk yang ditambahkan modul kemudian." : "Apa yang boleh dilakukan anggota peran ini, per modul."}
+            actions={
+              !all && (
+                <Button size="sm" disabled={!dirty} loading={saving} onClick={savePermissions}>
+                  Simpan izin
+                </Button>
+              )
+            }
+          >
+            <div className="space-y-6">
+              {saveError && <Notice tone="danger" title="Gagal menyimpan">{saveError}</Notice>}
+              {byModule(catalog).map(([module, perms]) => (
+                <fieldset key={module} className="space-y-3">
+                  <legend className="text-2xs font-semibold tracking-wide text-muted-foreground uppercase">{module}</legend>
+                  {perms.map((p) => (
+                    <label key={p.name} className="flex items-start gap-3">
+                      <Checkbox className="mt-0.5" checked={all || selected.has(p.name)} disabled={all} onCheckedChange={(v) => toggle(p.name, v === true)} />
+                      <span className="grid gap-0.5">
+                        <span className="text-sm">{p.description}</span>
+                        <span className="font-mono text-xs text-muted-foreground">{p.name}</span>
+                      </span>
+                    </label>
+                  ))}
+                </fieldset>
+              ))}
+            </div>
+          </SectionCard>
+        }
+        aside={
+          <SectionCard
+            title="Anggota"
+            description={`${members.length} pengguna`}
+            flush
+            actions={
               <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
                 <UserPlus />
-                Add
+                Tambah
               </Button>
-            </CardAction>
-          </CardHeader>
-          <CardContent>
+            }
+          >
             {members.length === 0 ? (
-              <EmptyState icon={ShieldCheck} title="Nobody has this role yet" />
+              <EmptyState icon={ShieldCheck} title="Belum ada yang memegang peran ini" />
             ) : (
-              <ul className="divide-y">
+              <ul className="divide-y divide-border">
                 {members.map((m) => (
-                  <li key={m.id} className="flex items-center justify-between gap-3 py-2.5">
+                  <li key={m.id} className="flex items-center justify-between gap-3 px-5 py-3">
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">{m.missing ? `User #${m.id}` : m.name}</div>
-                      <div className="truncate text-xs text-muted-foreground">{m.missing ? "No longer exists" : m.email}</div>
+                      <div className="truncate text-sm font-medium">{m.missing ? `Pengguna #${m.id}` : m.name}</div>
+                      <div className="truncate text-xs text-muted-foreground">{m.missing ? "Sudah tidak ada" : m.email}</div>
                     </div>
-                    <Button variant="ghost" size="icon-sm" aria-label={`Remove ${m.name || `user #${m.id}`}`} onClick={() => setRemoving(m)}>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`Cabut peran dari ${m.name || `pengguna #${m.id}`}`}
+                      className="text-muted-foreground hover:text-destructive"
+                      onClick={() => setRemoving(m)}
+                    >
                       <X />
                     </Button>
                   </li>
                 ))}
               </ul>
             )}
-          </CardContent>
-        </Card>
-      </div>
+          </SectionCard>
+        }
+      />
 
-      <RoleFormDialog open={editing} onOpenChange={setEditing} role={role} onSaved={(r) => setRole(r)} />
+      <RoleFormDialog open={editing} onClose={() => setEditing(false)} role={role} onSaved={setRole} />
       <AddMemberDialog
         open={adding}
-        onOpenChange={setAdding}
+        onClose={() => setAdding(false)}
         roleId={role.id}
         roleName={role.name}
         memberIds={new Set(members.map((m) => m.id))}
@@ -224,28 +208,28 @@ export default function RoleDetailPage() {
       <ConfirmDialog
         open={removing !== null}
         onOpenChange={(open) => !open && setRemoving(null)}
-        title={`Take ${role.name} from ${removing?.name || "this user"}?`}
-        description="They lose its permissions on their next request."
-        confirmLabel="Remove"
-        destructive
+        title={`Cabut ${role.name} dari ${removing?.name || "pengguna ini"}?`}
+        description="Izin dari peran ini hilang pada permintaan berikutnya."
+        confirmLabel="Cabut peran"
         onConfirm={async () => {
           if (!removing) return;
           await removeMember(role.id, removing.id);
+          notify.success("Peran dicabut");
           setMembers(await fetchMembers(role.id));
         }}
       />
       <ConfirmDialog
         open={deleting}
         onOpenChange={setDeleting}
-        title={`Delete ${role.name}?`}
-        description="Its members lose its permissions. This cannot be undone."
-        confirmLabel="Delete role"
-        destructive
+        title={`Hapus peran ${role.name}?`}
+        description="Anggotanya kehilangan izin dari peran ini. Tindakan ini tidak dapat dibatalkan."
+        confirmLabel="Hapus peran"
         onConfirm={async () => {
           await deleteRole(role.id);
+          notify.success("Peran dihapus");
           navigate(RBAC_PATHS.roles, { replace: true });
         }}
       />
-    </>
+    </Page>
   );
 }

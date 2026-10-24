@@ -1,6 +1,6 @@
 {
   "id": "auth",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "kind": "fullstack",
   "title": "Authentication",
   "summary": "Email + password sign-in: JWT in an HttpOnly cookie (Bearer for non-browser clients), login/logout/me, failed-attempt limit, the frontend guard, sign-in page, and user menu. Fills the kernel's d.Auth.",
@@ -14,7 +14,7 @@
   "stacks": [
     "go"
   ],
-  "requires_kernel": 2,
+  "requires_kernel": 3,
   "provides": {
     "contracts": [],
     "kernel": [
@@ -35,7 +35,8 @@
     }
   ],
   "ui": [
-    "ui-core"
+    "ui-core",
+    "ui-forms"
   ],
   "owns_tables": [],
   "env": [

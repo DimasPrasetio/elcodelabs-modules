@@ -36,7 +36,7 @@ The format is JSON rather than YAML so the tooling stays dependency-free, like t
   "when_to_use": ["…"],               // what makes it the right pick
   "when_not_to_use": ["…"],           // when to build something else instead
   "stacks": ["go"],                   // backend stacks it ships for (empty for web/ui)
-  "requires_kernel": 2,               // minimum kernel.Version it needs
+  "requires_kernel": 3,               // minimum kernel.Version it needs
 
   "provides": {
     "contracts": ["UserClient"],      // interfaces in api/contracts other modules can be wired to
@@ -93,7 +93,7 @@ The format is JSON rather than YAML so the tooling stays dependency-free, like t
 | `fullstack` | `api/` + `web/` (+ `migrations/`) | Go registry + web registry |
 | `backend` | `api/` (+ `migrations/`) | Go registry |
 | `web` | `web/` | web registry |
-| `ui` | `web/` into `apps/web/src` (shared kit: primitives, components, layouts) | nothing |
+| `ui` | its folders into `apps/web/src` (`shared/` kit: primitives, components, lib) | nothing, or only a web provider (`register.web`, e.g. `ui-feedback`'s toaster); never Go |
 
 ### Placeholders
 

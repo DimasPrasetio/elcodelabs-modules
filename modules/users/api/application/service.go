@@ -116,7 +116,7 @@ func (s *Service) Update(ctx context.Context, actorID, id int64, in UpdateInput)
 		return domain.User{}, err
 	}
 	if id == actorID && !in.IsActive {
-		return domain.User{}, apperror.Conflict("You cannot deactivate your own account")
+		return domain.User{}, apperror.Conflict("Anda tidak dapat menonaktifkan akun sendiri")
 	}
 	u, err := s.repo.Get(ctx, id)
 	if err != nil {
@@ -141,7 +141,7 @@ func (s *Service) Update(ctx context.Context, actorID, id int64, in UpdateInput)
 // Delete removes a user. Nobody can delete themselves.
 func (s *Service) Delete(ctx context.Context, actorID, id int64) error {
 	if id == actorID {
-		return apperror.Conflict("You cannot delete your own account")
+		return apperror.Conflict("Anda tidak dapat menghapus akun sendiri")
 	}
 	return notFound(s.repo.Delete(ctx, id))
 }
@@ -172,14 +172,14 @@ func (s *Service) GetCredentialsByEmail(ctx context.Context, email string) (Cred
 
 func notFound(err error) error {
 	if errors.Is(err, ErrNotFound) {
-		return apperror.NotFound("User not found")
+		return apperror.NotFound("Pengguna tidak ditemukan")
 	}
 	return err
 }
 
 func emailTaken(err error) error {
 	if errors.Is(err, ErrEmailTaken) {
-		return apperror.Validation([]validator.FieldError{{Field: "email", Message: "is already in use"}})
+		return apperror.Validation([]validator.FieldError{{Field: "email", Message: "sudah dipakai"}})
 	}
 	return err
 }

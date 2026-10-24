@@ -30,8 +30,8 @@ type Module struct {
 // tries again.
 func New(d *kernel.Deps) (*Module, error) {
 	d.Authz.Declare(
-		kernel.Permission{Name: presentation.PermRead, Module: "users", Description: "View the list of users"},
-		kernel.Permission{Name: presentation.PermManage, Module: "users", Description: "Add, edit, deactivate, and delete users"},
+		kernel.Permission{Name: presentation.PermRead, Module: "users", Description: "Melihat daftar pengguna"},
+		kernel.Permission{Name: presentation.PermManage, Module: "users", Description: "Menambah, mengubah, menonaktifkan, dan menghapus pengguna"},
 	)
 	svc := application.NewService(infrastructure.NewRepository(d.DB), infrastructure.BcryptHasher{})
 	m := &Module{svc: svc, handler: presentation.NewHandler(svc, d.Auth, d.Authz)}

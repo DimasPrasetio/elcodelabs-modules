@@ -36,7 +36,7 @@ func ValidateRole(v *validator.Validator, name, description string) {
 	v.Required("name", name)
 	v.MaxLen("name", name, MaxNameLength)
 	v.MaxLen("description", description, MaxDescriptionLength)
-	v.Check(!strings.EqualFold(strings.TrimSpace(name), AdminRole), "name", "is reserved")
+	v.Check(!strings.EqualFold(strings.TrimSpace(name), AdminRole), "name", "sudah dipakai sistem")
 }
 
 // Grants reports whether a set of granted permissions covers permission.

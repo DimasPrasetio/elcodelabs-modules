@@ -88,11 +88,11 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	response.OK(w, "Permissions retrieved", map[string]any{"permissions": perms})
+	response.OK(w, "Izin pengguna", map[string]any{"permissions": perms})
 }
 
 func (h *Handler) permissions(w http.ResponseWriter, r *http.Request) {
-	response.OK(w, "Permissions retrieved", h.svc.Catalog())
+	response.OK(w, "Daftar izin", h.svc.Catalog())
 }
 
 func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
@@ -105,7 +105,7 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
 	for i, role := range roles {
 		out[i] = toRoleDTO(role)
 	}
-	response.OK(w, "Roles retrieved", out)
+	response.OK(w, "Daftar peran", out)
 }
 
 func (h *Handler) getRole(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +119,7 @@ func (h *Handler) getRole(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	response.OK(w, "Role retrieved", toRoleDTO(role))
+	response.OK(w, "Data peran", toRoleDTO(role))
 }
 
 func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
@@ -133,7 +133,7 @@ func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	response.Created(w, "Role created", toRoleDTO(role))
+	response.Created(w, "Peran dibuat", toRoleDTO(role))
 }
 
 func (h *Handler) updateRole(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +152,7 @@ func (h *Handler) updateRole(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	response.OK(w, "Role updated", toRoleDTO(role))
+	response.OK(w, "Peran diperbarui", toRoleDTO(role))
 }
 
 func (h *Handler) deleteRole(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +165,7 @@ func (h *Handler) deleteRole(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	response.OK(w, "Role deleted", nil)
+	response.OK(w, "Peran dihapus", nil)
 }
 
 func (h *Handler) members(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +183,7 @@ func (h *Handler) members(w http.ResponseWriter, r *http.Request) {
 	for i, m := range members {
 		out[i] = toUserDTO(m.User, m.Missing)
 	}
-	response.OK(w, "Members retrieved", out)
+	response.OK(w, "Anggota peran", out)
 }
 
 func (h *Handler) addMember(w http.ResponseWriter, r *http.Request) {
@@ -201,7 +201,7 @@ func (h *Handler) addMember(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	response.Created(w, "Role given", nil)
+	response.Created(w, "Peran diberikan", nil)
 }
 
 func (h *Handler) removeMember(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +219,7 @@ func (h *Handler) removeMember(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	response.OK(w, "Role taken away", nil)
+	response.OK(w, "Peran dicabut", nil)
 }
 
 func (h *Handler) searchUsers(w http.ResponseWriter, r *http.Request) {
@@ -232,5 +232,5 @@ func (h *Handler) searchUsers(w http.ResponseWriter, r *http.Request) {
 	for i, u := range users {
 		out[i] = toUserDTO(u, false)
 	}
-	response.OK(w, "Users retrieved", out)
+	response.OK(w, "Daftar pengguna", out)
 }

@@ -15,14 +15,18 @@ creates that user at startup when the table is empty. Remove both after the firs
 roles), `GetCredentialsByEmail` (for an auth provider).
 It imports no other module.
 
-**Web:** `/users` — list with search, pagination, status pill; add/edit in a dialog, delete
-with confirmation; nav entry "Users" in the "Settings" group (shown with `users.read`); add,
-edit, and delete shown with `users.manage`. Built on `ui-core`.
+**Web:** `/users` — the Bingkai Navy list template: toolbar search with a filter chip, data
+table (status pill, ⋯ row menu), pagination with rows per page; add/edit in a side sheet,
+delete with confirmation, toasts on success; nav entry "Pengguna" in "Pengaturan" (shown with
+`users.read`); changing shown with `users.manage`. Indonesian copy. Built on `ui-core`,
+`ui-data`, `ui-forms`, `ui-feedback`.
 
 **Not here:** roles and who holds which permission (the `rbac` module), self-service
 profile/password change.
 
 ## Changes
 
+- **0.3.0** — needs kernel 3. Built on the four UI kits (list template, form sheet, toasts);
+  Indonesian copy and API messages.
 - **0.2.0** — needs kernel 2. Routes guarded by `users.read` / `users.manage` instead of "signed
   in"; UI hides what the user may not do. `UserClient` gains `GetByEmail` and `Search`.

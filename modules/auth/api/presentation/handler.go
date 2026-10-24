@@ -77,7 +77,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		// same-origin SPA + API.
 		SameSite: http.SameSiteLaxMode,
 	})
-	response.OK(w, "Signed in", sessionDTO{User: toUserDTO(s.User), ExpiresAt: s.ExpiresAt, Token: s.Token})
+	response.OK(w, "Berhasil masuk", sessionDTO{User: toUserDTO(s.User), ExpiresAt: s.ExpiresAt, Token: s.Token})
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
@@ -85,12 +85,12 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		Name: CookieName, Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: h.secureCookie, SameSite: http.SameSiteLaxMode,
 	})
-	response.OK(w, "Signed out", nil)
+	response.OK(w, "Berhasil keluar", nil)
 }
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	u, _ := r.Context().Value(userKey{}).(ports.User)
-	response.OK(w, "Signed in", toUserDTO(u))
+	response.OK(w, "Pengguna yang masuk", toUserDTO(u))
 }
 
 type userKey struct{}
@@ -106,7 +106,7 @@ func (h *Handler) Require(next http.Handler) http.Handler {
 			}
 		}
 		if token == "" {
-			response.Error(w, r, apperror.Unauthorized("Sign in required"))
+			response.Error(w, r, apperror.Unauthorized("Silakan masuk terlebih dahulu"))
 			return
 		}
 		u, err := h.svc.Resolve(r.Context(), token)

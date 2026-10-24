@@ -7,11 +7,15 @@
 
 | Module | Kind | Version | Kernel ≥ | What it does | Offers | Needs (ports) | Permissions | Builds on |
 |---|---|---|---|---|---|---|---|---|
-| [app-shell](modules/app-shell/README.md) | web | 0.2.0 | 2 | The frame around protected pages: collapsible sidebar built from every module's nav, inset canvas, breadcrumb header, and slots for a user menu. | — | — | — | ui-core |
-| [auth](modules/auth/README.md) | fullstack | 0.2.0 | 2 | Email + password sign-in: JWT in an HttpOnly cookie (Bearer for non-browser clients), login/logout/me, failed-attempt limit, the frontend guard, sign-in page, and user menu. Fills the kernel's d.Auth. | kernel auth | UserStore ← users | — | ui-core |
-| [rbac](modules/rbac/README.md) | fullstack | 0.1.0 | 2 | Who may do what: roles hold permissions that modules declare, users hold roles. Fills the kernel's d.Authz; Roles page with a per-module permission editor and members; Administrator role with every permission. | kernel authz | UserDirectory ← users | rbac.manage | ui-core |
-| [ui-core](modules/ui-core/README.md) | ui | 0.1.0 | 1 | The shadcn primitives and generic building blocks most screens need: page header, data table, pagination, form field, empty/error states, confirm dialog. | — | — | — | — |
-| [users](modules/users/README.md) | fullstack | 0.2.0 | 2 | The people who can sign in: list, search, add, edit, deactivate, delete; first-user bootstrap from env. Offers UserClient; guarded by users.read / users.manage. | UserClient | — | users.read, users.manage | ui-core |
+| [app-shell](modules/app-shell/README.md) | web | 0.3.0 | 3 | The frame around protected pages: collapsible sidebar built from every module's nav, inset canvas, breadcrumb header, and slots for a user menu. | — | — | — | ui-core |
+| [auth](modules/auth/README.md) | fullstack | 0.3.0 | 3 | Email + password sign-in: JWT in an HttpOnly cookie (Bearer for non-browser clients), login/logout/me, failed-attempt limit, the frontend guard, sign-in page, and user menu. Fills the kernel's d.Auth. | kernel auth | UserStore ← users | — | ui-core, ui-forms |
+| [rbac](modules/rbac/README.md) | fullstack | 0.2.0 | 3 | Who may do what: roles hold permissions that modules declare, users hold roles. Fills the kernel's d.Authz; Roles page with a per-module permission editor and members; Administrator role with every permission. | kernel authz | UserDirectory ← users | rbac.manage | ui-core, ui-data, ui-forms, ui-feedback |
+| [ui-core](modules/ui-core/README.md) | ui | 0.2.0 | 3 | Bingkai Navy foundation every screen uses: the restyled shadcn primitives, page layout (Page, PageHeader, SectionCard, SummaryCard), StatusBadge with fixed tones, Notice, empty/error/404 states, skeletons, DescriptionList, Money/Qty/DocNumber, Modal, FormSheet, and id-ID formatters. | — | — | — | — |
+| [ui-data](modules/ui-data/README.md) | ui | 0.1.0 | 3 | Lists and tables: DataTable (sort, selection with a bulk-action bar, column chooser, built-in loading/empty/error), Pagination, Toolbar with filter chips, FilterBar, SearchInput (debounced), ActionMenu (⋯), NavTabs. | — | — | — | ui-core |
+| [ui-feedback](modules/ui-feedback/README.md) | ui | 0.1.0 | 3 | Telling people what happened: toasts (notify), ConfirmDialog, ReasonDialog, a global loading bar for running requests, and an error boundary with a crash card — mounted once through its provider. | — | — | — | ui-core, ui-forms |
+| [ui-forms](modules/ui-forms/README.md) | ui | 0.1.0 | 3 | Forms: FormField, PasswordInput, SearchSelect, AsyncSearchSelect (server search, paging), HierarchicalSelect (tree), Segmented, MultiToggle, DateRangeFields, KeyValueEditor, FieldHint, FormSection/FieldGrid/StickyFooter/ActionRow, LineItemsEditor, FileDropzone, Stepper. | — | — | — | ui-core |
+| [ui-gallery](modules/ui-gallery/README.md) | web | 0.1.0 | 3 | A development page (/ui-gallery) showing every component of the four UI kits in all its variants — to check a preset, compare designs, and pick components. | — | — | — | ui-core, ui-data, ui-forms, ui-feedback |
+| [users](modules/users/README.md) | fullstack | 0.3.0 | 3 | The people who can sign in: list, search, add, edit, deactivate, delete; first-user bootstrap from env. Offers UserClient; guarded by users.read / users.manage. | UserClient | — | users.read, users.manage | ui-core, ui-data, ui-forms, ui-feedback |
 
 ### When to use
 
@@ -21,7 +25,15 @@
 
 **rbac** — use: Different people need different access: admins, staff, read-only viewers. Any app with more than one kind of user, once auth is in. Not when: Every signed-in user may do everything — without rbac that is already the policy. Access that depends on the record itself (only your branch's invoices): rbac grants per action, not per row — build that in the module that owns the data.
 
-**ui-core** — use: Any project with list, detail, or form screens — most library modules with a frontend build on it. Not when: A one-page site with no data screens: the scaffold's starter primitives are enough.
+**ui-core** — use: Any project with screens — every other kit and every module with a frontend builds on it. Not when: Never skipped when a module has a frontend.
+
+**ui-data** — use: Any screen that lists records. Not when: A screen with no list or table.
+
+**ui-feedback** — use: Every app with a frontend: confirmations, toasts, and a crash screen instead of a blank page. Not when: Never skipped when a module asks for confirmation or shows toasts.
+
+**ui-forms** — use: Any screen where people enter or edit data. Not when: Read-only screens.
+
+**ui-gallery** — use: In the library's testbed and while developing: to see the kits under the project's theme. Not when: In a production app — it is a developer tool; remove it before release.
 
 **users** — use: Any app where people sign in with an account the app itself stores. Not when: Sign-in through an external identity provider only (SSO/OAuth) with no local accounts.
 
@@ -29,4 +41,4 @@
 
 | Preset | Version | Look | Use for |
 |---|---|---|---|
-| [bingkai-navy](themes/bingkai-navy/DESIGN.md) | 0.1.0 | Dense back-office look: dark-navy frame around a light canvas, navy brand, Inter + Plus Jakarta Sans + Geist Mono, 14px base. | Back-office and admin apps used for hours a day on desktop: ERP, inventory, finance, HR, internal tools. Data-dense screens: tables, documents, forms with many fields. |
+| [bingkai-navy](themes/bingkai-navy/DESIGN.md) | 0.1.1 | Dense back-office look: dark-navy frame around a light canvas, navy brand, Inter + Plus Jakarta Sans + Geist Mono, 14px base. | Back-office and admin apps used for hours a day on desktop: ERP, inventory, finance, HR, internal tools. Data-dense screens: tables, documents, forms with many fields. |

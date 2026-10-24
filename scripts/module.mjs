@@ -22,7 +22,7 @@ import { dirname, join, resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  applyPreset, assertProject, detach, installModule, libraryIndex, loadManifest, readLock, status, upgrade,
+  applyPreset, assertProject, detach, installModule, libraryIndex, loadManifest, missingKits, readLock, status, upgrade,
 } from "./lib/install.mjs";
 import { promote } from "./lib/promote.mjs";
 
@@ -121,12 +121,20 @@ try {
       if (!args.length) die("add <id>...");
       assertProject(PROJECT);
       const reports = [];
+      // The ui kits a module builds on come along, in dependency order.
+      const queue = [];
       for (const id of args) {
+        for (const kit of missingKits(LIB, PROJECT, id)) if (!queue.includes(kit) && !args.includes(kit)) queue.push(kit);
+        queue.push(id);
+      }
+      for (const id of queue) {
+        if (readLock(PROJECT).modules[id]) continue;
         const m = loadManifest(LIB, id);
         const ports = Object.fromEntries(Object.entries(opts.ports).filter(([name]) => (m.ports ?? []).some((p) => p.name === name)));
         const r = installModule(LIB, PROJECT, id, { ports });
         reports.push(r);
-        out(`✓ ${id} ${r.version}: ${r.files} files, ${r.migrations} migration(s)${Object.keys(r.ports).length ? `, ports ${JSON.stringify(r.ports)}` : ""}`);
+        out(`✓ ${id} ${r.version}: ${r.files} files, ${r.migrations} migration(s)${Object.keys(r.ports).length ? `, ports ${JSON.stringify(r.ports)}` : ""}${args.includes(id) ? "" : " (needed by the modules added)"}`);
+        for (const t of r.tookOver ?? []) out(`  took over ${t}`);
         if (r.dirty) out("  ⚠ installed from uncommitted library changes — commit the library so upgrades have an exact base");
       }
       nextSteps(reports);
@@ -161,6 +169,14 @@ try {
       if (!ids.length) die("upgrade <id>|preset|--all");
       let conflicts = 0;
       for (const id of ids) {
+        // A new version may build on ui kits the project does not have yet: add them first.
+        if (id !== "preset") {
+          for (const kit of missingKits(LIB, PROJECT, id)) {
+            const k = installModule(LIB, PROJECT, kit);
+            out(`✓ ${kit} ${k.version} added (needed by ${id})`);
+            for (const t of k.tookOver ?? []) out(`  took over ${t}`);
+          }
+        }
         const r = upgrade(LIB, PROJECT, id, { ports: opts.ports });
         printUpgrade(r);
         conflicts += r.conflicts.length;

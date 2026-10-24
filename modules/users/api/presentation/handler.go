@@ -80,7 +80,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	for i, u := range users {
 		out[i] = toDTO(u)
 	}
-	response.Paginated(w, "Users retrieved", out, pagination.NewMeta(p, total))
+	response.Paginated(w, "Data pengguna", out, pagination.NewMeta(p, total))
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +94,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	response.OK(w, "User retrieved", toDTO(u))
+	response.OK(w, "Data pengguna", toDTO(u))
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +109,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	response.Created(w, "User created", toDTO(u))
+	response.Created(w, "Pengguna ditambahkan", toDTO(u))
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +129,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	response.OK(w, "User updated", toDTO(u))
+	response.OK(w, "Pengguna diperbarui", toDTO(u))
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
@@ -143,5 +143,5 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	response.OK(w, "User deleted", nil)
+	response.OK(w, "Pengguna dihapus", nil)
 }

@@ -1,6 +1,6 @@
 {
   "id": "app-shell",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "kind": "web",
   "title": "App shell",
   "summary": "The frame around protected pages: collapsible sidebar built from every module's nav, inset canvas, breadcrumb header, and slots for a user menu.",
@@ -11,7 +11,7 @@
     "Public sites, single-screen tools, or full-screen modes (a POS on a tablet): give those their own layout."
   ],
   "stacks": [],
-  "requires_kernel": 2,
+  "requires_kernel": 3,
   "provides": {
     "contracts": [],
     "kernel": []

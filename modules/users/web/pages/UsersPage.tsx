@@ -1,56 +1,35 @@
 import { useCallback, useEffect, useState } from "react";
-import { MoreHorizontal, Plus, Search, UserPlus } from "lucide-react";
+import { Pencil, Plus, Trash2, UserPlus } from "lucide-react";
 import { Button } from "@/shared/components/primitives/button";
-import { Card } from "@/shared/components/primitives/card";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/shared/components/primitives/dropdown-menu";
-import { Input } from "@/shared/components/primitives/input";
+import { ActionMenu } from "@/shared/components/ui/action-menu";
 import { ConfirmDialog } from "@/shared/components/ui/confirm-dialog";
 import { DataTable } from "@/shared/components/ui/data-table";
-import type { Column } from "@/shared/components/ui/data-table";
-import { EmptyState } from "@/shared/components/ui/empty-state";
-import { ErrorState } from "@/shared/components/ui/error-state";
+import type { DataTableColumn } from "@/shared/components/ui/data-table";
+import { Page } from "@/shared/components/ui/page";
 import { PageHeader } from "@/shared/components/ui/page-header";
-import { PaginationBar } from "@/shared/components/ui/pagination-bar";
+import { Pagination } from "@/shared/components/ui/pagination";
+import { SearchInput } from "@/shared/components/ui/search-input";
+import { StatusBadge } from "@/shared/components/ui/status-badge";
+import { Toolbar } from "@/shared/components/ui/toolbar";
 import { useCan } from "@/shared/access";
+import { formatDate } from "@/shared/lib/format";
+import { notify } from "@/shared/lib/notify";
 import { apiErrorMessage } from "@/shared/services/api-error";
 import type { PageMeta } from "@/shared/types/api";
-import { UserFormDialog } from "@/modules/users/components/UserFormDialog";
+import { UserFormSheet } from "@/modules/users/components/UserFormSheet";
 import { deleteUser, listUsers } from "@/modules/users/services/users.service";
 import type { User } from "@/modules/users/types/user";
 
-const LIMIT = 25;
-const dateFormat = new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "short", year: "numeric" });
-
-function StatusPill({ active }: { active: boolean }) {
-  return active ? (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-success-soft px-2 py-0.5 text-xs font-medium text-success">
-      <span className="size-1.5 rounded-full bg-current" />
-      Active
-    </span>
-  ) : (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-      <span className="size-1.5 rounded-full bg-current" />
-      Inactive
-    </span>
-  );
-}
-
 export default function UsersPage() {
   const [rows, setRows] = useState<User[]>([]);
-  const [meta, setMeta] = useState<PageMeta>({ page: 1, limit: LIMIT, total: 0, total_pages: 0 });
+  const [meta, setMeta] = useState<PageMeta>({ page: 1, limit: 25, total: 0, total_pages: 0 });
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
+  const [limit, setLimit] = useState(25);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<User | undefined>();
-  const [formOpen, setFormOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [deleting, setDeleting] = useState<User | undefined>();
   // Hide what this user may not do; the API refuses it anyway (users.manage).
   const canManage = useCan("users.manage");
@@ -59,7 +38,7 @@ export default function UsersPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await listUsers({ page, limit: LIMIT, q: query });
+      const res = await listUsers({ page, limit, q: query });
       setRows(res.data);
       setMeta(res.meta);
     } catch (err) {
@@ -67,151 +46,136 @@ export default function UsersPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, query]);
+  }, [page, limit, query]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  // Search as the user types, without a request per keystroke.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setPage(1);
-      setQuery(search.trim());
-    }, 300);
-    return () => clearTimeout(t);
-  }, [search]);
-
   function openCreate() {
     setEditing(undefined);
-    setFormOpen(true);
+    setSheetOpen(true);
   }
 
   function openEdit(user: User) {
     setEditing(user);
-    setFormOpen(true);
+    setSheetOpen(true);
   }
 
-  const columns: Column<User>[] = [
-    { key: "name", header: "Name", cell: (u) => <span className="font-medium">{u.name}</span> },
-    { key: "email", header: "Email", cell: (u) => <span className="text-muted-foreground">{u.email}</span> },
-    { key: "status", header: "Status", cell: (u) => <StatusPill active={u.is_active} /> },
-    { key: "created", header: "Added", cell: (u) => dateFormat.format(new Date(u.created_at)) },
-  ];
-  if (canManage) columns.push(
+  const columns: DataTableColumn<User>[] = [
+    { header: "Nama", render: (u) => <span className="font-medium">{u.name}</span> },
+    { header: "Email", render: (u) => <span className="text-muted-foreground">{u.email}</span> },
     {
-      key: "actions",
-      header: <span className="sr-only">Actions</span>,
-      className: "w-12",
-      cell: (u) => (
-        <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${u.name}`}>
-                <MoreHorizontal />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => openEdit(u)}>Edit</DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onSelect={() => setDeleting(u)}>
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      ),
+      header: "Status",
+      render: (u) => (u.is_active ? <StatusBadge tone="success">Aktif</StatusBadge> : <StatusBadge tone="muted">Nonaktif</StatusBadge>),
     },
-  );
-
-  const filtered = query !== "";
+    { header: "Ditambahkan", id: "created", render: (u) => formatDate(u.created_at) },
+  ];
+  if (canManage) {
+    columns.push({
+      header: "",
+      id: "actions",
+      width: 56,
+      align: "right",
+      render: (u) => (
+        <ActionMenu
+          variant="ghost"
+          size="icon-sm"
+          label={`Aksi untuk ${u.name}`}
+          items={[
+            { key: "edit", label: "Ubah", icon: <Pencil />, onSelect: () => openEdit(u) },
+            { key: "delete", label: "Hapus", icon: <Trash2 />, destructive: true, onSelect: () => setDeleting(u) },
+          ]}
+        />
+      ),
+    });
+  }
 
   return (
-    <>
+    <Page>
       <PageHeader
-        title="Users"
-        description="People who can sign in to this app."
+        title="Pengguna"
+        description="Orang yang bisa masuk ke aplikasi ini."
         actions={
           canManage && (
             <Button onClick={openCreate}>
               <Plus />
-              Add user
+              Tambah pengguna
             </Button>
           )
         }
       />
-      <Card className="gap-0 overflow-hidden py-0">
-        <div className="border-b p-3">
-          <div className="relative max-w-sm">
-            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search name or email…"
-              aria-label="Search users"
-              className="pl-8"
+      <section className="overflow-hidden rounded-xl border border-border bg-card">
+        <Toolbar
+          plain
+          search={
+            <SearchInput
+              value={query}
+              placeholder="Cari nama atau email…"
+              onSearch={(q) => {
+                setPage(1);
+                setQuery(q);
+              }}
             />
-          </div>
-        </div>
-        {error ? (
-          <ErrorState message={error} onRetry={load} />
-        ) : (
-          <>
-            <DataTable
-              columns={columns}
-              rows={rows}
-              getRowId={(u) => u.id}
-              loading={loading}
-              skeletonRows={8}
-              onRowClick={canManage ? openEdit : undefined}
-              rowLabel={(u) => `Edit ${u.name}`}
-              empty={
-                filtered ? (
-                  <EmptyState
-                    title="No users match"
-                    description={`Nothing found for "${query}".`}
-                    action={
-                      <Button variant="outline" size="sm" onClick={() => setSearch("")}>
-                        Clear search
-                      </Button>
-                    }
-                  />
-                ) : (
-                  <EmptyState
-                    icon={UserPlus}
-                    title="No users yet"
-                    description="Add the people who should be able to sign in."
-                    action={
-                      canManage && (
-                        <Button size="sm" onClick={openCreate}>
-                          <Plus />
-                          Add the first user
-                        </Button>
-                      )
-                    }
-                  />
-                )
-              }
-            />
-            {!loading && rows.length > 0 && <PaginationBar meta={meta} onPageChange={setPage} />}
-          </>
+          }
+          active={query ? [{ key: "q", label: `Cari: ${query}`, onRemove: () => setQuery("") }] : []}
+        />
+        <DataTable
+          columns={columns}
+          rows={rows}
+          rowKey={(u) => u.id}
+          loading={loading}
+          error={error}
+          onRetry={load}
+          onRowClick={canManage ? openEdit : undefined}
+          rowLabel={(u) => `Ubah ${u.name}`}
+          caption="Daftar pengguna"
+          emptyTitle={query ? "Tidak ada yang cocok" : "Belum ada pengguna"}
+          emptyDescription={query ? `Tidak ada pengguna untuk "${query}".` : "Tambahkan orang yang perlu masuk ke aplikasi."}
+          emptyAction={
+            query ? (
+              <Button variant="outline" size="sm" onClick={() => setQuery("")}>
+                Hapus pencarian
+              </Button>
+            ) : (
+              canManage && (
+                <Button size="sm" onClick={openCreate}>
+                  <UserPlus />
+                  Tambah pengguna pertama
+                </Button>
+              )
+            )
+          }
+        />
+        {!error && rows.length > 0 && (
+          <Pagination
+            page={meta.page}
+            limit={meta.limit}
+            total={meta.total}
+            noun="pengguna"
+            onPageChange={setPage}
+            onLimitChange={(n) => {
+              setPage(1);
+              setLimit(n);
+            }}
+          />
         )}
-      </Card>
+      </section>
 
-      <UserFormDialog open={formOpen} onOpenChange={setFormOpen} user={editing} onSaved={() => void load()} />
+      <UserFormSheet open={sheetOpen} onClose={() => setSheetOpen(false)} user={editing} onSaved={() => void load()} />
       <ConfirmDialog
         open={deleting !== undefined}
         onOpenChange={(open) => !open && setDeleting(undefined)}
-        title={`Delete ${deleting?.name ?? "user"}?`}
-        description="They will no longer be able to sign in. This cannot be undone."
-        confirmLabel="Delete"
-        destructive
+        title={`Hapus ${deleting?.name ?? "pengguna"}?`}
+        description="Pengguna ini tidak bisa masuk lagi. Tindakan ini tidak dapat dibatalkan."
+        confirmLabel="Hapus"
         onConfirm={async () => {
           if (!deleting) return;
           await deleteUser(deleting.id);
+          notify.success("Pengguna dihapus");
           await load();
         }}
       />
-    </>
+    </Page>
   );
 }

@@ -1,25 +1,28 @@
-import { TriangleAlert } from "lucide-react";
 import { Button } from "@/shared/components/primitives/button";
+import { Notice } from "@/shared/components/ui/notice";
 
 export interface ErrorStateProps {
-  /** The API's own message — never a generic "Something went wrong" when a real one exists. */
+  /** The API's own message — never a generic one when the API said why. */
   message: string;
   onRetry?: () => void;
+  title?: string;
+  retryLabel?: string;
+  className?: string;
 }
 
-/** A failed load, with the reason and a way to try again. */
-export function ErrorState({ message, onRetry }: ErrorStateProps) {
+/** A failed load: what went wrong, and "Coba lagi". */
+export function ErrorState({ message, onRetry, title = "Gagal memuat", retryLabel = "Coba lagi", className }: ErrorStateProps) {
   return (
-    <div role="alert" className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-      <div className="flex size-10 items-center justify-center rounded-full bg-destructive-soft text-destructive">
-        <TriangleAlert className="size-5" />
-      </div>
-      <p className="max-w-sm text-sm">{message}</p>
+    <Notice tone="danger" title={title} className={className}>
+      {message}
       {onRetry && (
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          Try again
-        </Button>
+        <>
+          {" "}
+          <Button variant="ghost" size="sm" onClick={onRetry} className="h-auto px-1.5 py-0.5 align-baseline">
+            {retryLabel}
+          </Button>
+        </>
       )}
-    </div>
+    </Notice>
   );
 }
