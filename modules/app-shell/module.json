@@ -1,0 +1,29 @@
+{
+  "id": "app-shell",
+  "version": "0.1.0",
+  "kind": "web",
+  "title": "App shell",
+  "summary": "The frame around protected pages: collapsible sidebar built from every module's nav, inset canvas, breadcrumb header, and slots for a user menu.",
+  "when_to_use": [
+    "Back-office and admin apps with several sections reached from a sidebar."
+  ],
+  "when_not_to_use": [
+    "Public sites, single-screen tools, or full-screen modes (a POS on a tablet): give those their own layout."
+  ],
+  "stacks": [],
+  "requires_kernel": 1,
+  "provides": { "contracts": [], "kernel": [] },
+  "ports": [],
+  "ui": ["ui-core"],
+  "owns_tables": [],
+  "env": [],
+  "routes": { "api": [], "web": [] },
+  "npm_dependencies": {},
+  "install": {
+    "web": "apps/web/src/modules/app-shell",
+    "shared": "apps/web/src/shared"
+  },
+  "register": {
+    "web": { "import": "@/modules/app-shell/module", "export": "appShellModule" }
+  }
+}

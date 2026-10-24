@@ -1,0 +1,64 @@
+{
+  "id": "auth",
+  "version": "0.1.0",
+  "kind": "fullstack",
+  "title": "Authentication",
+  "summary": "Email + password sign-in: JWT in an HttpOnly cookie (Bearer for non-browser clients), login/logout/me, failed-attempt limit, the frontend guard, sign-in page, and user menu. Fills the kernel's d.Auth.",
+  "when_to_use": [
+    "Any app where people sign in with an email and password the app checks itself."
+  ],
+  "when_not_to_use": [
+    "Sign-in only through SSO/OAuth/an identity provider.",
+    "Refresh tokens, password reset, or 2FA are needed now — not in this version (reset needs a mail module)."
+  ],
+  "stacks": ["go"],
+  "requires_kernel": 1,
+  "provides": { "contracts": [], "kernel": ["auth"] },
+  "ports": [
+    {
+      "name": "UserStore",
+      "required": true,
+      "description": "Find a user's credentials (bcrypt hash, active flag) by email, and a user's profile by ID.",
+      "adapters": {
+        "users": {
+          "file": "adapters/userstore_users.go",
+          "expr": "authUserStore{users: usersModule.Client()}"
+        }
+      }
+    }
+  ],
+  "ui": ["ui-core"],
+  "owns_tables": [],
+  "env": [
+    { "name": "JWT_SECRET", "required": true, "description": "Signs session tokens. Production: a random value of at least 32 characters (openssl rand -hex 32)." },
+    { "name": "JWT_EXPIRES_IN", "required": false, "description": "Session length as a Go duration (default 24h)." }
+  ],
+  "routes": {
+    "api": [
+      "POST /api/v1/auth/login",
+      "POST /api/v1/auth/logout",
+      "GET /api/v1/auth/me"
+    ],
+    "web": ["/login"]
+  },
+  "npm_dependencies": {},
+  "install": {
+    "api": "apps/api/internal/modules/auth",
+    "web": "apps/web/src/modules/auth"
+  },
+  "replaces": ["apps/web/src/modules/auth"],
+  "register": {
+    "go": {
+      "import": "internal/modules/auth",
+      "build": [
+        "authModule, err := auth.New(d, {{port:UserStore}})",
+        "if err != nil {",
+        "\treturn err",
+        "}"
+      ],
+      "routes": ["authModule.Routes(mux)"],
+      "after": ["d.Auth.Provide(authModule.Authenticator())"]
+    },
+    "web": { "import": "@/modules/auth/module", "export": "authModule" }
+  }
+}

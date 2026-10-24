@@ -1,0 +1,11 @@
+{
+  "name": "elcodelabs-modules",
+  "private": true,
+  "description": "Reusable modules, UI kits, and theme presets for projects scaffolded with monorepo-elcodelabs.",
+  "type": "module",
+  "scripts": {
+    "catalog": "node scripts/catalog.mjs",
+    "check": "node scripts/catalog.mjs --check",
+    "testbed": "node scripts/testbed.mjs"
+  }
+}
