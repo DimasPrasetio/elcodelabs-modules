@@ -13,10 +13,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node scripts/catalog.mjs --check
+      # Architecture rules, plus version bumps and forward-only migrations against the base.
+      - run: node scripts/catalog.mjs --check --since "${{ github.event.pull_request.base.sha || github.event.before }}"
 
   testbed:
     runs-on: ubuntu-latest

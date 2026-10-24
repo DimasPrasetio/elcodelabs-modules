@@ -61,13 +61,19 @@ applied one is never rewritten. Install from a committed library so upgrades hav
 Customize an installed module in new files of its own where possible — fewer conflicts later.
 When a module has diverged for good, `detach` it.
 
+## Changing the library
+
+Read [AGENTS.md](AGENTS.md) first — the architecture is locked, and it lists every rule with
+the check that enforces it. After cloning, enable the pre-commit hook once:
+`git config core.hooksPath .githooks`.
+
 ## Layout
 
 ```txt
 modules/<id>/        module.json, README.md, and the folders it installs (api/, web/, shared/,
                      migrations/, adapters/)
 themes/<id>/         preset.json, theme.css, fonts.ts, DESIGN.md
-scripts/catalog.mjs  validates manifests (incl. "no module imports another") → CATALOG.md, catalog.json
+scripts/catalog.mjs  validates manifests and the architecture rules (scripts/lib/rules.mjs) → CATALOG.md, catalog.json
 scripts/testbed.mjs  installs modules into freshly scaffolded projects and tests them end to end
 scripts/module.mjs   the CLI projects use (add, status, upgrade, detach, promote, …)
 scripts/lib/         install/upgrade core, library reader (working tree or a commit), promote
@@ -93,7 +99,7 @@ Scenarios:
 | `no-rbac` | users + auth without rbac: the kernel's default — any signed-in user passes `users.manage` |
 | `auth-alone` | auth runs on a UserStore the project wrote itself — no users module |
 | `users-alone` | users runs without any auth provider; its guarded routes refuse (401) |
-| `lifecycle` | the CLI on a throwaway git copy of the library: add (and a refused add), status, upgrade merging the project's and the library's changes (then the project still builds), a conflicting upgrade, detach, promote (and a refused promote) |
+| `lifecycle` | the CLI on a throwaway git copy of the library: add (and a refused add), status, upgrade merging the project's and the library's changes (then the project still builds), a conflicting upgrade, detach, promote (refused when the module imports another or breaks an architecture rule) |
 
 A new module is done when its README and `module.json` are complete, the catalog check passes,
 and a testbed scenario covers it.

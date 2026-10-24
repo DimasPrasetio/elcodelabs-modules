@@ -465,6 +465,12 @@ async function lifecycle() {
     writeFileSync(join(bad, "billing.module.go"), `package billing\n\nimport _ "${readFileSync(join(dir, "apps/api/go.mod"), "utf8").match(/^module (\S+)/m)[1]}/internal/modules/users/contracts"\n`);
     r = cli("promote", "billing", "--lib", lib);
     expect("promote refuses a module that imports another", r.status === 1 && r.stderr.includes('imports module "users"'), r.stderr);
+    const loud = join(dir, "apps/web/src/modules/banner");
+    mkdirSync(loud, { recursive: true });
+    writeFileSync(join(loud, "module.tsx"), `export const bannerModule = { id: "banner", nav: [], slots: {} };\nexport const Banner = () => <div className="bg-red-500" />;\n`);
+    r = cli("promote", "banner", "--lib", lib);
+    expect("promote refuses a module that breaks an architecture rule, leaving the library untouched",
+      r.status === 1 && r.stderr.includes("semantic-colors") && !existsSync(join(lib, "modules/banner")), r.stderr);
   } catch (err) {
     fail(`lifecycle: ${err.message}`);
   } finally {

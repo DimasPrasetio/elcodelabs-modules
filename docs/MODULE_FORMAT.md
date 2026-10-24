@@ -9,20 +9,11 @@ The format is JSON rather than YAML so the tooling stays dependency-free, like t
 
 ## Rules every module follows
 
-1. **A module never imports another module** — not its internals, not its `contracts/`. What it
-   needs from outside is a port in its own `ports/` (Go) or goes through `shared/` (web). Ports
-   are connected in the project's composition root by adapters
-   (`apps/api/internal/modules/adapter_<consumer>_<port>.go`).
-2. **Authentication and authorization are the kernel's `d.Auth` and `d.Authz`**, not ports: a
-   module guards handlers with `d.Auth.Require` (signed in) or `d.Authz.Require("<id>.<action>")`
-   (permission), declares its permissions with `d.Authz.Declare` in `New`, and hides UI with
-   `useCan`. The auth and rbac modules fill the slots; without rbac, signed in = allowed.
-3. **It builds only on the kernel** (`requires_kernel`) and on `ui` kits listed in `ui`.
-4. **Frontend contributes through `FrontendModule`** (`module.tsx`): routes, `nav`, `slots`,
-   and at most a `guard` or a `layout`.
-5. **Semantic token classes only**, no raw colors — it must look right under any preset.
-6. **It owns its tables**; migrations create only those. No foreign key or join to a table it
-   does not own.
+The architecture rules — what a module may import, how its layers depend on each other, which
+tables it may touch, how its UI is built, and what a change may not do to a released module —
+are listed in [AGENTS.md](../AGENTS.md), each with the check that enforces it
+(`scripts/lib/rules.mjs`). They come from the `monorepo-elcodelabs` skill, which owns the
+architecture.
 
 ## `module.json`
 

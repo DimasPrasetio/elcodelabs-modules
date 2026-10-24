@@ -3,8 +3,9 @@
 // pre-fill module.json, and leaves TODOs for what only a person can say (summary, when to
 // use). Refuses a module that imports another module — that has to become a port first.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
+import { checkModules } from "./rules.mjs";
 
 const read = (p) => readFileSync(p, "utf8");
 
@@ -127,7 +128,7 @@ export function promote(libRoot, project, id, options = {}) {
     requires_kernel: kernel,
     provides: { contracts: uniq(contracts), kernel: [] },
     ports: uniq(ports).map((name) => ({ name, required: true, description: "TODO", adapters: {} })),
-    ui: webText.includes("@/shared/components/ui/") ? ["ui-core"] : [],
+    ui: kitsUsed(libRoot, webText),
     owns_tables: uniq(tables),
     env: env.map((name) => ({ name, required: required.has(name), description: "TODO" })),
     routes: { api: apiRoutes, web: [] },
@@ -141,8 +142,37 @@ export function promote(libRoot, project, id, options = {}) {
   writeFileSync(join(target, "module.json"), JSON.stringify(manifest, null, 2) + "\n");
   writeFileSync(join(target, "README.md"), `# ${id}\n\nTODO: what it does, its API and screens, what it offers and needs, what it does not do.\n`);
 
+  // The same architecture rules every library module passes (AGENTS.md). A module that breaks
+  // one is not copied in half-way: the library is left as it was.
+  const library = readdirSync(join(libRoot, "modules"), { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => ({ id: e.name, m: JSON.parse(read(join(libRoot, "modules", e.name, "module.json"))) }));
+  const broken = [];
+  checkModules(libRoot, library, (where, msg) => where === `modules/${id}` && broken.push(msg));
+  if (broken.length) {
+    rmSync(target, { recursive: true, force: true });
+    throw new Error(`${id} cannot be promoted yet — it breaks the library's architecture rules:\n  - ${broken.join("\n  - ")}`);
+  }
+
   todo.unshift("module.json: title, summary, when_to_use, when_not_to_use, port and env descriptions");
   todo.push("README.md", "remove anything specific to the project it came from (names, copy, business rules)",
     "a testbed scenario that installs and exercises it", "node scripts/catalog.mjs");
   return { id, path: target, files: apiFiles.length + webFiles.length, migrations: migs.length, manifest, todo };
+}
+
+/** The ui kits whose files the code imports (each @/shared/... file belongs to at most one kit). */
+function kitsUsed(libRoot, code) {
+  const kits = new Set();
+  const modulesDir = join(libRoot, "modules");
+  for (const e of readdirSync(modulesDir, { withFileTypes: true })) {
+    const manifest = join(modulesDir, e.name, "module.json");
+    if (!e.isDirectory() || !existsSync(manifest)) continue; // the module being promoted has none yet
+    const m = JSON.parse(read(manifest));
+    if (m.kind !== "ui") continue;
+    for (const f of walk(join(modulesDir, e.name, "shared"))) {
+      const spec = `@/shared/${f.replace(/\.(tsx?|css)$/, "").replace(/\/index$/, "")}`;
+      if (code.includes(`"${spec}"`) || code.includes(`'${spec}'`)) kits.add(e.name);
+    }
+  }
+  return [...kits].sort();
 }

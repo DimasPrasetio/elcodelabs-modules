@@ -1,0 +1,4 @@
+#!/bin/sh
+# Refuses a commit that breaks the library's architecture (rules: AGENTS.md).
+# Enable once per clone: git config core.hooksPath .githooks
+exec node scripts/catalog.mjs --check --since HEAD

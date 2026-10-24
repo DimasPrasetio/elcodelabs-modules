@@ -2,15 +2,20 @@
 // Validates every module.json and preset.json, then writes CATALOG.md (what an AI reads to
 // pick modules) and catalog.json (what tooling reads). Zero dependencies.
 //
-// Usage: node scripts/catalog.mjs           write the catalog
-//        node scripts/catalog.mjs --check   fail if a manifest is invalid or the catalog is stale
+// Usage: node scripts/catalog.mjs                       write the catalog
+//        node scripts/catalog.mjs --check               fail if a manifest or module breaks a rule,
+//                                                       or the catalog is stale
+//        node scripts/catalog.mjs --check --since <ref> also check versions and migrations against
+//                                                       <ref> (the pre-commit hook and CI do this)
 
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkHistory, checkModules } from "./lib/rules.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CHECK = process.argv.includes("--check");
+const SINCE = process.argv.includes("--since") ? process.argv[process.argv.indexOf("--since") + 1] : undefined;
 const KINDS = ["fullstack", "backend", "web", "ui"];
 const problems = [];
 const problem = (where, msg) => problems.push(`${where}: ${msg}`);
@@ -56,21 +61,12 @@ for (const { id, m } of modules) {
       if (!(m.ports ?? []).some((p) => p.name === name)) problem(at, `register uses undeclared port ${name}`);
     }
   }
-  // The rule every module lives by: no imports between modules. (adapters/ is not installed
-  // into the module — it is composition-root code, which is where modules meet.)
-  const own = new Set([id]);
-  const scan = (dir) => {
-    if (!existsSync(dir)) return;
-    for (const e of readdirSync(dir, { withFileTypes: true, recursive: true })) {
-      if (!e.isFile() || !/\.(go|tsx?|mjs)$/.test(e.name)) continue;
-      const src = readFileSync(join(e.parentPath ?? e.path, e.name), "utf8");
-      for (const [, , other] of src.matchAll(/(internal\/modules|@\/modules)\/([a-z0-9-]+)/g)) {
-        if (!own.has(other)) problem(at, `${e.name} imports module "${other}"`);
-      }
-    }
-  };
-  for (const folder of Object.keys(m.install ?? {})) scan(join(ROOT, at, folder));
 }
+
+// The architecture rules (layout, layers, imports, kits, colors, HTTP, tables) — and, with
+// --since <ref>, what a change may not do to released modules.
+checkModules(ROOT, modules, problem);
+if (SINCE) checkHistory(ROOT, SINCE, problem);
 
 for (const { id, p } of presets) {
   const at = `themes/${id}`;
@@ -81,7 +77,7 @@ for (const { id, p } of presets) {
 
 const uniq = [...new Set(problems)];
 if (uniq.length) {
-  console.error("Invalid manifests:\n  - " + uniq.join("\n  - "));
+  console.error("Architecture check failed (rules: AGENTS.md):\n  - " + uniq.join("\n  - "));
   process.exit(1);
 }
 
