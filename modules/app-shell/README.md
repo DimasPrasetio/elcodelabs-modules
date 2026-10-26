@@ -8,8 +8,8 @@ The `layout` of the frontend registry: every protected page renders inside it.
   768px.
 - **Header** — 48px, sticky inside the canvas: sidebar toggle and a breadcrumb of the active
   entry's group and label. The page's own `<h1>` stays in its `PageHeader`.
-- **Slots** — renders whatever modules put in `"sidebar-footer"` (e.g. auth's user menu) and
-  `"header-end"`.
+- **Slots** — renders whatever modules put in `"sidebar-footer"` (e.g. auth's user menu),
+  `"shell:scope"` (an organization module's company/branch picker), and `"header-end"`.
 - Entries with a `permission` show only to users who hold it (`useAccess` from
   `@/shared/access`).
 - The app name in the sidebar comes from `<title>` in `index.html`.
@@ -22,6 +22,8 @@ and builds on `ui-core` (breadcrumb, separator, sheet, tooltip).
 
 ## Changes
 
+- **0.5.0** — needs kernel 6. Renders the `"shell:scope"` slot (an organization module's
+  company/branch picker) at the right of the header, before `"header-end"`.
 - **0.4.0** — the sidebar shows placeholders until the user's permissions have loaded, instead of
   an empty menu that pops in.
 

@@ -33,9 +33,11 @@ type Repository interface {
 	Create(ctx context.Context, f domain.Stored) (int64, error)
 	// Get returns an undeleted file, or contracts.ErrNotFound.
 	Get(ctx context.Context, id int64) (domain.Stored, error)
+	// SoftDelete deletes an unlocked file; false when there is none to delete.
 	SoftDelete(ctx context.Context, id int64, at time.Time) (bool, error)
+	Lock(ctx context.Context, id int64, at time.Time) error
 	List(ctx context.Context, owner, search string, p pagination.Params) ([]domain.Stored, int64, error)
-	PurgeCandidates(ctx context.Context, before time.Time) ([]Purgeable, error)
+	SystemPurgeCandidates(ctx context.Context, before time.Time) ([]Purgeable, error)
 	DeleteRow(ctx context.Context, id int64) error
 }
 
@@ -146,6 +148,9 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
+	if f.Locked {
+		return contracts.ErrLocked
+	}
 	ok, err := s.repo.SoftDelete(ctx, id, s.now())
 	if err != nil {
 		return err
@@ -156,6 +161,15 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	s.audit.Record(ctx, kernel.AuditEntry{Module: "files", Action: "file.deleted", Target: fmt.Sprintf("file:%d", id), Summary: "Menghapus berkas " + f.Name,
 		Data: map[string]any{"owner": f.Owner, "name": f.Name, "size": f.Size}})
 	return nil
+}
+
+// Lock keeps the file for good: the document it is attached to was posted (a record kept 10
+// years). Locking a locked file is a no-op.
+func (s *Service) Lock(ctx context.Context, id int64) error {
+	if _, err := s.repo.Get(ctx, id); err != nil {
+		return err
+	}
+	return s.repo.Lock(ctx, id, s.now())
 }
 
 func (s *Service) List(ctx context.Context, owner, search string, p pagination.Params) ([]contracts.File, int64, error) {
@@ -176,7 +190,7 @@ func (s *Service) Purge(ctx context.Context) error {
 	if err := s.store.CleanPartials(24 * time.Hour); err != nil {
 		return err
 	}
-	gone, err := s.repo.PurgeCandidates(ctx, s.now().Add(-keepDeleted))
+	gone, err := s.repo.SystemPurgeCandidates(ctx, s.now().Add(-keepDeleted))
 	if err != nil {
 		return err
 	}
@@ -192,7 +206,7 @@ func (s *Service) Purge(ctx context.Context) error {
 }
 
 func toContract(f domain.Stored) contracts.File {
-	return contracts.File{ID: f.ID, Owner: f.Owner, Name: f.Name, ContentType: f.ContentType, Size: f.Size, SHA256: f.SHA256, CreatedAt: f.CreatedAt}
+	return contracts.File{ID: f.ID, Owner: f.Owner, Name: f.Name, ContentType: f.ContentType, Size: f.Size, SHA256: f.SHA256, CreatedAt: f.CreatedAt, Locked: f.Locked}
 }
 
 func humanSize(n int64) string {

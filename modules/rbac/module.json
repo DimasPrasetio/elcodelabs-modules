@@ -1,21 +1,21 @@
 {
   "id": "rbac",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "kind": "fullstack",
   "title": "Roles and permissions (RBAC)",
-  "summary": "Who may do what: roles hold permissions that modules declare, users hold roles. Fills the kernel's d.Authz; Roles page with a per-module permission editor and members; Administrator role with every permission.",
+  "summary": "Who may do what: roles hold permissions that modules declare, users hold roles per company — across it or in one branch. Fills the kernel's d.Authz (and Units for branches); Roles page with a per-module permission editor and members; Administrator role with every permission.",
   "when_to_use": [
     "Different people need different access: admins, staff, read-only viewers.",
     "Any app with more than one kind of user, once auth is in."
   ],
   "when_not_to_use": [
     "Every signed-in user may do everything — without rbac that is already the policy.",
-    "Access that depends on the record itself (only your branch's invoices): rbac grants per action, not per row — build that in the module that owns the data."
+    "Access that depends on the record itself (only invoices you created): rbac grants per action and says which branches it reaches (d.Authz.Units) — filtering rows is the job of the module that owns them."
   ],
   "stacks": [
     "go"
   ],
-  "requires_kernel": 5,
+  "requires_kernel": 6,
   "provides": {
     "contracts": [],
     "kernel": [

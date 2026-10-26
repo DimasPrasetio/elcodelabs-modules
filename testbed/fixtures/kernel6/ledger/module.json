@@ -1,0 +1,26 @@
+{
+  "id": "ledger",
+  "version": "0.1.0",
+  "kind": "backend",
+  "title": "Fixture ledger",
+  "summary": "Testbed fixture: stock per company, taken by orders inside its transaction; notes what it hears and a daily tick.",
+  "when_to_use": ["Never in a project: the testbed proves kernel 6 with it."],
+  "when_not_to_use": ["Always."],
+  "stacks": ["go"],
+  "requires_kernel": 6,
+  "install": { "api": "apps/api/internal/modules/ledger" },
+  "scoped": true,
+  "owns_tables": ["ledger_stock", "ledger_notes"],
+  "provides": { "contracts": ["StockClient"] },
+  "listens": [
+    { "event": "orders.order.placed", "subscriber": "ledger.note-order", "handler": "ledgerModule.OnOrderPlaced" }
+  ],
+  "env": [{ "name": "LEDGER_DAILY_AT", "required": false, "description": "HH:MM of the daily note (testbed: an hour ago, to prove catch-up)." }],
+  "register": {
+    "go": {
+      "import": "internal/modules/ledger",
+      "build": ["ledgerModule := ledger.New(d)"],
+      "routes": ["ledgerModule.Routes(mux)"]
+    }
+  }
+}

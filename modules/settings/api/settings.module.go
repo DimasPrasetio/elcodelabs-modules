@@ -25,7 +25,7 @@ type Module struct {
 // New builds the module. files is optional (nil): without it the logo cannot be uploaded.
 func New(d *kernel.Deps, files ports.FileStore) (*Module, error) {
 	d.Authz.Declare(kernel.Permission{Name: presentation.PermManage, Module: "settings", Description: "Mengubah pengaturan aplikasi dan profil perusahaan"})
-	svc := application.NewService(infrastructure.NewRepository(d.DB), files, d.Audit)
+	svc := application.NewService(infrastructure.NewRepository(d.Tx), files, d.Audit)
 	return &Module{svc: svc, handler: presentation.NewHandler(svc, d.Auth, d.Authz)}, nil
 }
 

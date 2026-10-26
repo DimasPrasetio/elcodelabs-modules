@@ -1,0 +1,13 @@
+CREATE TABLE ledger_stock (
+  company_id BIGINT NOT NULL DEFAULT 1,
+  sku VARCHAR(40) NOT NULL,
+  qty INT NOT NULL,
+  PRIMARY KEY (company_id, sku)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE ledger_notes (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  body VARCHAR(100) NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

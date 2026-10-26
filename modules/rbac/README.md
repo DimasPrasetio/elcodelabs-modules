@@ -19,6 +19,23 @@ Permissions come from code; roles and who holds them are data admins edit.
   cleared on every role or membership change.
 - `user_roles.user_id` is a primitive ID (no foreign key across modules); a member the user
   directory no longer knows is listed as missing, so it can still be removed.
+- **Per company and branch** (kernel 6 scope) — roles are defined once; a user holds a role in
+  one company, across all of it (`branch_id` 0) or in one branch. Where a request works
+  (`kernel.ScopeFrom`) decides what applies: in a branch, the company-wide roles and that
+  branch's; at the whole company, company-wide roles only — someone holding a role in one
+  branch works in that branch's scope. `d.Authz.Units` (rbac is a `kernel.ScopedAuthorizer`)
+  tells a module which branches a permission reaches. Managing counts only what the manager
+  holds *there*: giving or taking a role in a branch needs `rbac.manage` and the role's
+  permissions in that branch, and the user placed there (`d.Scope`; without an organization
+  module only company 1 exists, with no branches); defining, changing, or deleting a role —
+  defined once for the app — needs them company-wide in every company where the role has
+  members, under a lock on the role, so nobody gives it elsewhere in between. An account is one
+  across companies and branches, so acting on it (`Covers`: reset a password, deactivate) is a
+  company-wide act: it needs, company-wide, everything its owner holds, in every company — and
+  for an account holding nothing, some company-wide permission in the active company. Each company
+  keeps at least one active company-wide Administrator (checked under a lock, so two removals at
+  once cannot both pass); the first one is bootstrapped in company 1 — another company's first
+  is the organization module's to appoint when it creates the company.
 
 **API:** `GET /api/v1/rbac/me` (the signed-in user's permissions — session only) and, behind
 `rbac.manage`: permission catalog, roles CRUD, role members (list/add/remove), user search.
@@ -29,10 +46,18 @@ Permissions come from code; roles and who holds them are data admins edit.
 **Web:** `/roles` (list: permissions count, members) and `/roles/:id` (permission checkboxes
 grouped by module, members with add/remove), nav "Roles" in "Settings" shown with
 `rbac.manage`. Its `provider` supplies `@/shared/access` — `useCan` and `NavItem.permission` in
-every module answer from the user's real permissions, reloaded on the `session:changed` app event.
+every module answer from the user's real permissions, reloaded on the `session:changed` and
+`scope:changed` app events. A member held in one branch shows "hanya cabang #n"; giving a role
+in one branch is the API's `branch_id` (an organization module brings the branch picker).
 
 ## Changes
 
+- **0.5.0** — needs kernel 6. Roles held per company and branch (migration 003: `company_id`,
+  `branch_id` on `user_roles`; existing members stay company-wide in company 1), `Units` for
+  `d.Authz.Units`, membership changes recorded as `security` audit, repositories inside `d.Tx`.
+  At the whole company only company-wide roles apply; managing a role needs `rbac.manage`
+  where it applies (in every company a role's change reaches); `Covers` looks across
+  companies; the last active company-wide Administrator is kept under a lock.
 - **0.4.0** — needs kernel 5. Role changes and membership are recorded in `d.Audit`
   (`role.created`, `role.updated` with the before/after permissions, `role.deleted`,
   `role.member_added`, `role.member_removed`).

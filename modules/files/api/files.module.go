@@ -41,7 +41,7 @@ func New(d *kernel.Deps) (*Module, error) {
 	if err := disk.Check(); err != nil {
 		return nil, err
 	}
-	svc := application.NewService(infrastructure.NewRepository(d.DB), disk, d.Audit, d.Auth, maxBytes)
+	svc := application.NewService(infrastructure.NewRepository(d.Tx), disk, d.Audit, d.Auth, maxBytes)
 	d.Jobs.Every("files.purge", 24*time.Hour, svc.Purge)
 	return &Module{svc: svc, handler: presentation.NewHandler(svc, d.Authz)}, nil
 }
@@ -59,6 +59,7 @@ func (c client) Save(ctx context.Context, u contracts.Upload) (contracts.File, e
 }
 func (c client) Get(ctx context.Context, id int64) (contracts.File, error) { return c.svc.Get(ctx, id) }
 func (c client) Delete(ctx context.Context, id int64) error                { return c.svc.Delete(ctx, id) }
+func (c client) Lock(ctx context.Context, id int64) error                  { return c.svc.Lock(ctx, id) }
 func (c client) Open(ctx context.Context, id int64) (contracts.File, io.ReadSeekCloser, error) {
 	return c.svc.Open(ctx, id)
 }

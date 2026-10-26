@@ -139,7 +139,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID int64, current, nex
 	if err != nil {
 		return Session{}, err
 	}
-	s.audit.Record(ctx, kernel.AuditEntry{Module: "auth", Action: "auth.password_changed", Target: userTarget(userID), Summary: "Mengganti kata sandi sendiri"})
+	s.audit.Record(ctx, kernel.AuditEntry{Kind: kernel.AuditSecurity, Module: "auth", Action: "auth.password_changed", Target: userTarget(userID), Summary: "Mengganti kata sandi sendiri"})
 	return session, nil
 }
 
@@ -205,7 +205,7 @@ func (s *Service) sendReset(ctx context.Context, email string, from Client) erro
 	if err := s.mailer.Send(ctx, user.Email, user.Name, subject, text, body); err != nil {
 		return err
 	}
-	s.audit.Record(ctx, kernel.AuditEntry{Module: "auth", Action: "auth.password_reset_requested", Actor: user.ID, Target: userTarget(user.ID), Summary: "Meminta tautan atur ulang kata sandi"})
+	s.audit.Record(ctx, kernel.AuditEntry{Kind: kernel.AuditSecurity, Module: "auth", Action: "auth.password_reset_requested", Actor: user.ID, Target: userTarget(user.ID), Summary: "Meminta tautan atur ulang kata sandi"})
 	return nil
 }
 
@@ -259,7 +259,7 @@ func (s *Service) ResetPassword(ctx context.Context, token, next string, from Cl
 		return err
 	}
 	_ = s.resets.VoidUser(ctx, rec.UserID, now)
-	s.audit.Record(ctx, kernel.AuditEntry{Module: "auth", Action: "auth.password_reset", Actor: rec.UserID, Target: userTarget(rec.UserID), Summary: "Mengatur ulang kata sandi lewat email"})
+	s.audit.Record(ctx, kernel.AuditEntry{Kind: kernel.AuditSecurity, Module: "auth", Action: "auth.password_reset", Actor: rec.UserID, Target: userTarget(rec.UserID), Summary: "Mengatur ulang kata sandi lewat email"})
 	return nil
 }
 

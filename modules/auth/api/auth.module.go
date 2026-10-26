@@ -53,7 +53,7 @@ func New(d *kernel.Deps, users ports.UserStore, passwords ports.PasswordWriter, 
 	}
 	svc := application.NewService(application.Deps{
 		Users: users, Passwords: passwords, Mailer: mailer,
-		Sessions: infrastructure.NewSessions(d.DB), Resets: infrastructure.NewResets(d.DB),
+		Sessions: infrastructure.NewSessions(d.Tx), Resets: infrastructure.NewResets(d.Tx),
 		Tokens:  application.NewTokens(secret, ttl, d.Config.Name),
 		Limiter: application.NewLimiter(15*time.Minute, 50_000),
 		Audit:   d.Audit, Log: d.Log, AppURL: appURL, AppName: d.Config.Name,

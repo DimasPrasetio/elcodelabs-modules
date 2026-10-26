@@ -24,5 +24,10 @@ export interface RbacUser {
   missing?: boolean;
 }
 
+/** A user holding a role in the active company: everywhere (branch 0) or in one branch. */
+export interface RbacMember extends RbacUser {
+  branch_id: number;
+}
+
 /** Granted to the Administrator role: every permission, including future ones. */
 export const WILDCARD = "*";

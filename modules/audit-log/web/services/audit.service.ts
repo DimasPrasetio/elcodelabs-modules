@@ -5,6 +5,7 @@ import type { AuditEntry } from "@/modules/audit-log/types/audit";
 export interface AuditQuery {
   page: number;
   limit: number;
+  kind: string;
   module: string;
   target: string;
   from: string;

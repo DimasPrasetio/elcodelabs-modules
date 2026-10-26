@@ -15,19 +15,21 @@ import (
 
 // Filter narrows the trail. From and To are a half-open interval.
 type Filter struct {
-	Module string
-	Actor  int64
-	Target string
-	From   time.Time
-	To     time.Time
+	Company int64 // set by List from the request's scope
+	Kind    string
+	Module  string
+	Actor   int64
+	Target  string
+	From    time.Time
+	To      time.Time
 }
 
 // Repository is the audit_log table.
 type Repository interface {
 	Insert(ctx context.Context, e domain.Entry) error
 	List(ctx context.Context, f Filter, p pagination.Params) ([]domain.Entry, int64, error)
-	Modules(ctx context.Context) ([]string, error)
-	DeleteOlderThan(ctx context.Context, before time.Time) (int64, error)
+	Modules(ctx context.Context, company int64) ([]string, error)
+	SystemDeleteOlderThan(ctx context.Context, before time.Time) (int64, error)
 }
 
 // Service is the audit trail.
@@ -52,8 +54,16 @@ func (s *Service) Write(ctx context.Context, r kernel.AuditRecord) error {
 		}
 		data = b
 	}
+	kind := string(r.Kind)
+	if kind == "" {
+		kind = string(kernel.AuditChange)
+	}
+	company := r.CompanyID
+	if company == 0 {
+		company = kernel.DefaultCompany
+	}
 	return s.repo.Insert(ctx, domain.Entry{
-		OccurredAt: r.At, ActorID: r.ActorID,
+		OccurredAt: r.At, ActorID: r.ActorID, Kind: domain.Cut(kind, 10), CompanyID: company, BranchID: r.BranchID,
 		Module: domain.Cut(r.Module, domain.MaxModule), Action: domain.Cut(r.Action, domain.MaxAction),
 		Target: domain.Cut(r.Target, domain.MaxTarget), Summary: domain.Cut(r.Summary, domain.MaxSummary),
 		Data: data, IP: domain.Cut(r.IP, 45), RequestID: domain.Cut(r.RequestID, 64),
@@ -66,8 +76,10 @@ type Named struct {
 	ActorName string
 }
 
-// List is the trail, newest first, with each actor's name when the directory knows it.
+// List is the active company's trail, newest first, with each actor's name when the directory
+// knows it.
 func (s *Service) List(ctx context.Context, f Filter, p pagination.Params) ([]Named, int64, error) {
+	f.Company = kernel.ScopeFrom(ctx).CompanyID
 	// An open end is a real bound: MySQL compares a TIMESTAMP with Go's zero time ("0000-00-00")
 	// as no match at all.
 	if f.From.IsZero() {
@@ -103,13 +115,15 @@ func (s *Service) List(ctx context.Context, f Filter, p pagination.Params) ([]Na
 	return out, total, nil
 }
 
-func (s *Service) Modules(ctx context.Context) ([]string, error) { return s.repo.Modules(ctx) }
+func (s *Service) Modules(ctx context.Context) ([]string, error) {
+	return s.repo.Modules(ctx, kernel.ScopeFrom(ctx).CompanyID)
+}
 
 // Prune removes entries older than the retention period — the job the module schedules.
 func (s *Service) Prune(ctx context.Context) error {
 	before := s.now().Add(-s.retention)
 	for range 20 { // at most 100 000 rows a run, in short statements
-		n, err := s.repo.DeleteOlderThan(ctx, before)
+		n, err := s.repo.SystemDeleteOlderThan(ctx, before)
 		if err != nil || n < 5000 || ctx.Err() != nil {
 			return err
 		}

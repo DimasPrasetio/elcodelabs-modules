@@ -35,7 +35,7 @@ func New(d *kernel.Deps) (*Module, error) {
 		kernel.Permission{Name: presentation.PermRead, Module: "users", Description: "Melihat daftar pengguna"},
 		kernel.Permission{Name: presentation.PermManage, Module: "users", Description: "Menambah, mengubah, dan menonaktifkan pengguna"},
 	)
-	svc := application.NewService(infrastructure.NewRepository(d.DB), infrastructure.BcryptHasher{}, d.Authz, d.Audit)
+	svc := application.NewService(infrastructure.NewRepository(d.Tx), infrastructure.BcryptHasher{}, d.Authz, d.Audit)
 	m := &Module{svc: svc, handler: presentation.NewHandler(svc, d.Auth, d.Authz)}
 
 	email, password := config.Get("USERS_BOOTSTRAP_EMAIL", ""), config.Get("USERS_BOOTSTRAP_PASSWORD", "")

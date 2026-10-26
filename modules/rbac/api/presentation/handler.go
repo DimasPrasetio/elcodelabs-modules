@@ -4,18 +4,20 @@ package presentation
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"__GO_MODULE__/internal/kernel"
 	"__GO_MODULE__/internal/modules/rbac/application"
 	"__GO_MODULE__/internal/modules/rbac/domain"
 	"__GO_MODULE__/internal/modules/rbac/ports"
+	"__GO_MODULE__/internal/shared/apperror"
 	"__GO_MODULE__/internal/shared/request"
 	"__GO_MODULE__/internal/shared/response"
 )
 
 // PermManage is the permission this module declares (rbac.module.go) and guards with.
-const PermManage = "rbac.manage"
+const PermManage = domain.PermManage
 
 type roleDTO struct {
 	ID          int64     `json:"id"`
@@ -43,7 +45,13 @@ type roleRequest struct {
 }
 
 type memberRequest struct {
-	UserID int64 `json:"user_id"`
+	UserID   int64 `json:"user_id"`
+	BranchID int64 `json:"branch_id"` // 0 or absent: across the whole company
+}
+
+type memberDTO struct {
+	userDTO
+	BranchID int64 `json:"branch_id"` // 0: across the whole company
 }
 
 func toRoleDTO(r domain.Role) roleDTO {
@@ -182,9 +190,9 @@ func (h *Handler) members(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	out := make([]userDTO, len(members))
+	out := make([]memberDTO, len(members))
 	for i, m := range members {
-		out[i] = toUserDTO(m.User, m.Missing)
+		out[i] = memberDTO{userDTO: toUserDTO(m.User, m.Missing), BranchID: m.BranchID}
 	}
 	response.OK(w, "Anggota peran", out)
 }
@@ -201,7 +209,7 @@ func (h *Handler) addMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor, _ := h.auth.UserID(r.Context())
-	if err := h.svc.AddMember(r.Context(), actor, id, in.UserID); err != nil {
+	if err := h.svc.AddMember(r.Context(), actor, id, in.UserID, in.BranchID); err != nil {
 		response.Error(w, r, err)
 		return
 	}
@@ -219,8 +227,15 @@ func (h *Handler) removeMember(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
+	var branch int64
+	if b := r.URL.Query().Get("branch"); b != "" {
+		if branch, err = strconv.ParseInt(b, 10, 64); err != nil || branch < 0 {
+			response.Error(w, r, apperror.BadRequest("Parameter branch tidak valid"))
+			return
+		}
+	}
 	actor, _ := h.auth.UserID(r.Context())
-	if err := h.svc.RemoveMember(r.Context(), actor, id, userID); err != nil {
+	if err := h.svc.RemoveMember(r.Context(), actor, id, userID, branch); err != nil {
 		response.Error(w, r, err)
 		return
 	}

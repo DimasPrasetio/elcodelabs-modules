@@ -1,6 +1,6 @@
 # settings
 
-App-wide settings. Fullstack (Go + React), owns `settings` (named JSON documents).
+Settings per company (kernel 6 scope). Fullstack (Go + React), owns `settings` (named JSON documents).
 
 **Company profile** — name, legal name, address, phone, email, NPWP (15 or 16 digits), time zone
 (default `Asia/Jakarta`; it decides where a day starts for reports), and a logo. Read by any
@@ -18,7 +18,7 @@ hidden and everything else works.
 
 **Settings page** `/settings` ("Pengaturan › Umum", `settings.manage`): the company form, the logo,
 then whatever other modules contribute through the **`settings:sections`** slot (a
-`<SectionCard>` each) — one place for app-wide settings without modules importing each other.
+`<SectionCard>` each) — one place for settings without modules importing each other.
 
 **Audit:** `settings.company_updated` (only the fields that changed), `settings.logo_updated`,
 `settings.logo_removed`.
@@ -27,4 +27,7 @@ then whatever other modules contribute through the **`settings:sections`** slot 
 
 ## Changes
 
+- **0.2.0** — needs kernel 6. Scoped: each company keeps its own settings and company profile
+  (migration 002: `company_id` in the key; existing settings are company 1's). Saving runs
+  inside `d.Tx`. The public logo is company 1's (the sign-in page has no company yet).
 - **0.1.0** — first version.

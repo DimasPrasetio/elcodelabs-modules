@@ -65,6 +65,10 @@ and `UserMenu` in the `"sidebar-footer"` slot. Replaces the scaffold's starter `
 
 ## Changes
 
+- **0.6.0** — needs kernel 6. Sessions and reset tokens stored inside `d.Tx`; sign-ins, failed
+  sign-ins, sign-outs, and password changes recorded as `security` audit (UU PDP: who got in,
+  and who tried). Every guarded request now carries its company/branch scope (resolved by the
+  kernel in `d.Auth.Require`).
 - **0.5.0** — needs kernel 5. Change-my-password and forgot-password (optional ports
   `PasswordWriter`, `Mailer`; table `auth_password_resets`, migration 002; `APP_URL`); audit of
   sign-ins and password changes; hourly cleanup job; the user menu renders `user-menu:items`;

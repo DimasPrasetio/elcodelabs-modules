@@ -1,0 +1,33 @@
+{
+  "id": "orders",
+  "version": "0.1.0",
+  "kind": "backend",
+  "title": "Fixture orders",
+  "summary": "Testbed fixture: places an order and takes its stock from the ledger in one d.Tx, then announces it.",
+  "when_to_use": ["Never in a project: the testbed proves kernel 6 with it."],
+  "when_not_to_use": ["Always."],
+  "stacks": ["go"],
+  "requires_kernel": 6,
+  "install": { "api": "apps/api/internal/modules/orders" },
+  "go_kits": ["fixkit"],
+  "scoped": true,
+  "owns_tables": ["orders"],
+  "emits": [
+    { "name": "orders.order.placed", "version": 1, "description": "An order was placed: {id, number, sku, qty}." }
+  ],
+  "ports": [
+    {
+      "name": "Stock",
+      "required": true,
+      "description": "Take stock for an order, inside the order's transaction.",
+      "adapters": { "ledger": { "file": "adapters/stock_ledger.go", "expr": "ordersStock{ledger: ledgerModule.Client()}" } }
+    }
+  ],
+  "register": {
+    "go": {
+      "import": "internal/modules/orders",
+      "build": ["ordersModule := orders.New(d, {{port:Stock}})"],
+      "routes": ["ordersModule.Routes(mux)"]
+    }
+  }
+}

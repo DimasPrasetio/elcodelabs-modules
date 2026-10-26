@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DependencyList } from "react";
+import { onAppEvent } from "@/shared/app-events";
 import { apiErrorMessage } from "@/shared/services/api-error";
 
 export interface Resource<T> {
@@ -15,7 +16,8 @@ export interface Resource<T> {
 /**
  * Loads what a page shows and keeps only the latest answer. When deps change, the previous
  * request is aborted through its signal and anything it still returns is dropped — so page 2
- * of an old search can never replace page 1 of the new one.
+ * of an old search can never replace page 1 of the new one. It loads again when the tab
+ * switches company or branch ("scope:changed"), so a page never shows another company's data.
  *
  *   const users = useResource((signal) => listUsers({ page, q }, signal), [page, q]);
  */
@@ -47,5 +49,6 @@ export function useResource<T>(load: (signal: AbortSignal) => Promise<T>, deps: 
   }, [...deps, round]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reload = useCallback(() => setRound((n) => n + 1), []);
+  useEffect(() => onAppEvent("scope:changed", reload), [reload]);
   return { data, loading, error, reload };
 }

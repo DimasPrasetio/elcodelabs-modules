@@ -32,4 +32,8 @@ details (actor, action, target, IP, request ID, the before/after data). Nav entr
 
 ## Changes
 
+- **0.2.0** — needs kernel 6. Scoped: each record keeps its kind (`change`, `access` to
+  personal data, `export`, `security`), company, and branch (migration 002); the trail shows the
+  active company's records, filterable by kind; records written inside the change's `d.Tx` commit
+  with it; date filters count days in the branch's or the app's time zone.
 - **0.1.0** — first version.

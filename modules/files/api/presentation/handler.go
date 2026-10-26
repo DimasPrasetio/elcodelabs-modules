@@ -32,10 +32,11 @@ type fileDTO struct {
 	Size        int64     `json:"size"`
 	SHA256      string    `json:"sha256"`
 	CreatedAt   time.Time `json:"created_at"`
+	Locked      bool      `json:"locked"`
 }
 
 func toDTO(f contracts.File) fileDTO {
-	return fileDTO{ID: f.ID, Owner: f.Owner, Name: f.Name, ContentType: f.ContentType, Size: f.Size, SHA256: f.SHA256, CreatedAt: f.CreatedAt}
+	return fileDTO{ID: f.ID, Owner: f.Owner, Name: f.Name, ContentType: f.ContentType, Size: f.Size, SHA256: f.SHA256, CreatedAt: f.CreatedAt, Locked: f.Locked}
 }
 
 // Handler serves /api/v1/files.
@@ -57,6 +58,9 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 func notFound(err error) error {
 	if errors.Is(err, contracts.ErrNotFound) {
 		return apperror.NotFound("Berkas tidak ditemukan")
+	}
+	if errors.Is(err, contracts.ErrLocked) {
+		return apperror.Conflict("Berkas ini lampiran dokumen yang sudah diposting dan tidak dapat dihapus")
 	}
 	return err
 }

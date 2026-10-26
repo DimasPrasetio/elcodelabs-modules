@@ -10,27 +10,37 @@ import { Page } from "@/shared/components/ui/page";
 import { PageHeader } from "@/shared/components/ui/page-header";
 import { Pagination } from "@/shared/components/ui/pagination";
 import { SearchInput } from "@/shared/components/ui/search-input";
+import { StatusBadge } from "@/shared/components/ui/status-badge";
 import { Toolbar } from "@/shared/components/ui/toolbar";
 import { useResource } from "@/shared/hooks/use-resource";
 import { formatDateTime } from "@/shared/lib/format";
 import { listAudit, listModules } from "@/modules/audit-log/services/audit.service";
-import type { AuditEntry } from "@/modules/audit-log/types/audit";
+import type { AuditEntry, AuditKind } from "@/modules/audit-log/types/audit";
+import type { Tone } from "@/shared/lib/tone";
 
 const actor = (e: AuditEntry) => (e.actor_id === 0 ? "Sistem" : e.actor_name || `Pengguna #${e.actor_id}`);
+
+const KINDS: Record<AuditKind, { label: string; tone: Tone }> = {
+  change: { label: "Perubahan", tone: "neutral" },
+  access: { label: "Akses data pribadi", tone: "info" },
+  export: { label: "Ekspor", tone: "warning" },
+  security: { label: "Keamanan", tone: "danger" },
+};
 
 /** Who did what, when — read-only, newest first. */
 export default function AuditPage() {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(25);
+  const [kind, setKind] = useState("");
   const [module, setModule] = useState("");
   const [target, setTarget] = useState("");
   const [range, setRange] = useState({ from: "", to: "" });
   const [open, setOpen] = useState<AuditEntry>();
   const modules = useResource((signal) => listModules(signal), []);
-  const entries = useResource((signal) => listAudit({ page, limit, module, target, ...range }, signal), [page, limit, module, target, range.from, range.to]);
+  const entries = useResource((signal) => listAudit({ page, limit, kind, module, target, ...range }, signal), [page, limit, kind, module, target, range.from, range.to]);
   const rows = entries.data?.data ?? [];
   const meta = entries.data?.meta ?? { page, limit, total: 0, total_pages: 0 };
-  const filtered = Boolean(module || target || range.from || range.to);
+  const filtered = Boolean(kind || module || target || range.from || range.to);
 
   const columns: DataTableColumn<AuditEntry>[] = [
     { header: "Waktu", id: "time", render: (e) => <span className="tabular whitespace-nowrap">{formatDateTime(e.occurred_at)}</span> },
@@ -38,9 +48,12 @@ export default function AuditPage() {
     {
       header: "Aktivitas",
       render: (e) => (
-        <span className="grid">
+        <span className="grid gap-0.5">
           <span>{e.summary || e.action}</span>
-          <span className="font-mono text-xs text-muted-foreground">{e.action}</span>
+          <span className="flex items-center gap-2">
+            {e.kind !== "change" && <StatusBadge tone={KINDS[e.kind]?.tone ?? "neutral"}>{KINDS[e.kind]?.label ?? e.kind}</StatusBadge>}
+            <span className="font-mono text-xs text-muted-foreground">{e.action}</span>
+          </span>
         </span>
       ),
     },
@@ -83,6 +96,22 @@ export default function AuditPage() {
           }
           more={
             <div className="grid gap-3">
+              <FormField label="Jenis catatan">
+                <NativeSelect
+                  value={kind}
+                  onChange={(e) => {
+                    setPage(1);
+                    setKind(e.target.value);
+                  }}
+                >
+                  <NativeSelectOption value="">Semua jenis</NativeSelectOption>
+                  {(Object.keys(KINDS) as AuditKind[]).map((k) => (
+                    <NativeSelectOption key={k} value={k}>
+                      {KINDS[k].label}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </FormField>
               <DateRangeFields
                 from={range.from}
                 to={range.to}
@@ -93,7 +122,7 @@ export default function AuditPage() {
               />
             </div>
           }
-          moreActiveCount={(range.from ? 1 : 0) + (range.to ? 1 : 0)}
+          moreActiveCount={(kind ? 1 : 0) + (range.from ? 1 : 0) + (range.to ? 1 : 0)}
         />
         <DataTable
           columns={columns}
@@ -128,6 +157,8 @@ export default function AuditPage() {
             <DescriptionList
               items={[
                 { label: "Pelaku", value: actor(open) },
+                { label: "Jenis", value: KINDS[open.kind]?.label ?? open.kind },
+                ...(open.branch_id ? [{ label: "Cabang", value: `#${open.branch_id}` }] : []),
                 { label: "Aksi", value: <span className="font-mono text-xs">{open.action}</span> },
                 { label: "Modul", value: open.module },
                 { label: "Target", value: open.target || "–" },

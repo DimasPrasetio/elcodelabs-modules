@@ -1,5 +1,6 @@
 // Package mailer sends the app's email: modules queue a message through its contract
-// (MailClient, reached through their own port), and a background job delivers it with retries.
+// (MailClient, reached through their own port), and a kernel task (d.Tasks) delivers it with
+// retries; the outbox table is the history.
 // It imports no other module.
 package mailer
 
@@ -38,9 +39,10 @@ func New(d *kernel.Deps) (*Module, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mailer: %w", err)
 	}
-	svc := application.NewService(infrastructure.NewRepository(d.DB), transport, from, d.Audit)
-	d.Jobs.Every("mailer.deliver", 10*time.Second, svc.DeliverDue)
-	d.Jobs.Every("mailer.prune", 6*time.Hour, svc.Prune)
+	svc := application.NewService(infrastructure.NewRepository(d.Tx), transport, from, d.Audit, d.Tx, d.Tasks)
+	svc.RegisterTasks()
+	d.Jobs.Daily("mailer.prune", "03:30", svc.Prune)
+	d.Jobs.Every("mailer.rescue", 10*time.Minute, svc.Rescue)
 	return &Module{svc: svc, handler: presentation.NewHandler(svc, d.Authz)}, nil
 }
 

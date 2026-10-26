@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Download, Trash2 } from "lucide-react";
+import { Download, Lock, Trash2 } from "lucide-react";
 import { ActionMenu } from "@/shared/components/ui/action-menu";
 import { ConfirmDialog } from "@/shared/components/ui/confirm-dialog";
 import { DataTable } from "@/shared/components/ui/data-table";
@@ -34,7 +34,15 @@ export default function FilesPage() {
   const meta = files.data?.meta ?? { page, limit, total: 0, total_pages: 0 };
 
   const columns: DataTableColumn<StoredFile>[] = [
-    { header: "Nama", render: (f) => <span className="font-medium break-all">{f.name}</span> },
+    {
+      header: "Nama",
+      render: (f) => (
+        <span className="flex items-center gap-1.5">
+          {f.locked && <Lock className="size-3.5 shrink-0 text-muted-foreground" aria-label="Terkunci: lampiran dokumen yang sudah diposting" />}
+          <span className="font-medium break-all">{f.name}</span>
+        </span>
+      ),
+    },
     { header: "Modul", render: (f) => <span className="font-mono text-xs">{f.owner}</span> },
     { header: "Jenis", render: (f) => <span className="text-muted-foreground">{f.content_type}</span> },
     { header: "Ukuran", align: "right", width: 104, render: (f) => <span className="tabular whitespace-nowrap">{size(f.size)}</span> },
@@ -51,7 +59,7 @@ export default function FilesPage() {
           label={`Aksi untuk ${f.name}`}
           items={[
             { key: "download", label: "Unduh", icon: <Download />, onSelect: () => window.open(downloadUrl(f.id), "_blank", "noopener") },
-            ...(canManage ? [{ key: "delete", label: "Hapus", icon: <Trash2 />, destructive: true, onSelect: () => setDeleting(f) }] : []),
+            ...(canManage && !f.locked ? [{ key: "delete", label: "Hapus", icon: <Trash2 />, destructive: true, onSelect: () => setDeleting(f) }] : []),
           ]}
         />
       ),

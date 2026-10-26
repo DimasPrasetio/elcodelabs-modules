@@ -129,6 +129,9 @@ function renderFiles(src, m, goModule, ports) {
   return out;
 }
 
+/** The kits m builds on: ui kits (web) and Go kits. */
+const kitsOf = (m) => [...(m.ui ?? []), ...(m.go_kits ?? [])];
+
 const adapterPath = (id, port) => `apps/api/internal/modules/adapter_${id}_${port.toLowerCase()}.go`;
 
 /** Migration name (NNN_<name>) → { up, down } contents. */
@@ -183,7 +186,9 @@ function resolvePorts(m, ports, lock) {
  * port left unwired (the module turns that feature off). */
 function goRegisterLines(m, portExpr) {
   if (!m.register?.go) return [];
-  return [...m.register.go.build, ...m.register.go.routes, ...(m.register.go.after ?? [])].map((line) =>
+  // Event subscriptions are wired here, in the composition root, from the manifest's "listens".
+  const listens = (m.listens ?? []).map((l) => `d.Events.On(${JSON.stringify(l.event)}, ${JSON.stringify(l.subscriber)}, ${l.handler})`);
+  return [...m.register.go.build, ...m.register.go.routes, ...(m.register.go.after ?? []), ...listens].map((line) =>
     line.replace(/\{\{port:(\w+)\}\}/g, (_, name) => {
       if (portExpr[name]) return portExpr[name];
       if ((m.ports ?? []).some((p) => p.name === name && !p.required)) return "nil";
@@ -351,7 +356,7 @@ function addMigrations(project, id, migrations) {
 
 function addModuleMapRow(project, m) {
   const file = join(project, "knowledge/MODULE_MAP.md");
-  if (!existsSync(file) || m.kind === "ui") return;
+  if (!existsSync(file) || m.kind === "ui" || m.kind === "gokit") return;
   let map = read(file).replace(/^\| _none yet_ \|.*\n/m, "");
   if (new RegExp(`^\\| ${m.id} \\|`, "m").test(map)) return;
   const contract = [...(m.provides?.contracts ?? []), ...(m.provides?.kernel ?? []).map((k) => `kernel ${k}`)].join(", ") || "—";
@@ -375,8 +380,8 @@ export function installModule(libRoot, project, id, options = {}) {
   if (lock.modules[id]) throw new Error(`${id} is already installed (${lock.modules[id].version}) — use upgrade`);
 
   assertKernel(project, m);
-  for (const kit of m.ui ?? []) {
-    if (!lock.modules[kit]) throw new Error(`${id} builds on the ui kit "${kit}" — add it first`);
+  for (const kit of kitsOf(m)) {
+    if (!lock.modules[kit]) throw new Error(`${id} builds on the kit "${kit}" — add it first`);
   }
   const portExpr = resolvePorts(m, options.ports, lock);
   const goLines = goRegisterLines(m, portExpr);
@@ -466,10 +471,10 @@ export function missingKits(libRoot, project, id) {
   const order = [];
   const visit = (kit) => {
     if (lock.modules[kit] || order.includes(kit)) return;
-    for (const dep of loadManifest(libRoot, kit).ui ?? []) visit(dep);
+    for (const dep of kitsOf(loadManifest(libRoot, kit))) visit(dep);
     order.push(kit);
   };
-  for (const kit of loadManifest(libRoot, id).ui ?? []) visit(kit);
+  for (const kit of kitsOf(loadManifest(libRoot, id))) visit(kit);
   return order;
 }
 
@@ -633,8 +638,8 @@ export function upgrade(libRoot, project, id, options = {}) {
   const mBase = manifestFrom(baseSrc, id);
   const mNew = manifestFrom(theirsSrc, id);
   assertKernel(project, mNew);
-  for (const kit of mNew.ui ?? []) {
-    if (!lock.modules[kit]) throw new Error(`${id} ${mNew.version} builds on the ui kit "${kit}" — add it first (module.mjs upgrade does)`);
+  for (const kit of kitsOf(mNew)) {
+    if (!lock.modules[kit]) throw new Error(`${id} ${mNew.version} builds on the kit "${kit}" — add it first (module.mjs upgrade does)`);
   }
   const ports = { ...entry.ports, ...(options.ports ?? {}) };
   const portExpr = resolvePorts(mNew, ports, lock);
@@ -731,7 +736,7 @@ export function removeModule(libRoot, project, id) {
     if (Object.values(e.ports ?? {}).includes(id)) dependents.push(`${other} (port wired to ${id})`);
     let m;
     try { m = loadManifest(libRoot, other); } catch { continue; }
-    if ((m.ui ?? []).includes(id)) dependents.push(`${other} (builds on the kit ${id})`);
+    if (kitsOf(m).includes(id)) dependents.push(`${other} (builds on the kit ${id})`);
   }
   if (dependents.length) throw new Error(`${id} cannot be removed — ${dependents.join(", ")} needs it; remove or rewire those first`);
 

@@ -10,6 +10,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"golang.org/x/crypto/bcrypt"
 
+	"__GO_MODULE__/internal/kernel"
 	"__GO_MODULE__/internal/modules/users/application"
 	"__GO_MODULE__/internal/modules/users/domain"
 	"__GO_MODULE__/internal/modules/users/infrastructure/sqlc"
@@ -18,19 +19,22 @@ import (
 
 // Repository implements application.Repository.
 type Repository struct {
-	q *sqlc.Queries
+	tx *kernel.TxSlot
 }
 
-func NewRepository(db *sql.DB) *Repository {
-	return &Repository{q: sqlc.New(db)}
+func NewRepository(tx *kernel.TxSlot) *Repository {
+	return &Repository{tx: tx}
 }
+
+// q runs on the transaction in ctx when there is one (d.Tx), else on the pool.
+func (r *Repository) q(ctx context.Context) *sqlc.Queries { return sqlc.New(r.tx.Conn(ctx)) }
 
 func (r *Repository) List(ctx context.Context, search string, p pagination.Params) ([]domain.User, int64, error) {
-	rows, err := r.q.ListUsers(ctx, sqlc.ListUsersParams{Search: search, Limit: int32(p.Limit), Offset: int32(p.Offset())})
+	rows, err := r.q(ctx).ListUsers(ctx, sqlc.ListUsersParams{Search: search, Limit: int32(p.Limit), Offset: int32(p.Offset())})
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := r.q.CountUsers(ctx, sqlc.CountUsersParams{Search: search})
+	total, err := r.q(ctx).CountUsers(ctx, sqlc.CountUsersParams{Search: search})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -42,11 +46,11 @@ func (r *Repository) List(ctx context.Context, search string, p pagination.Param
 }
 
 func (r *Repository) CountAll(ctx context.Context) (int64, error) {
-	return r.q.CountAllUsers(ctx)
+	return r.q(ctx).CountAllUsers(ctx)
 }
 
 func (r *Repository) Get(ctx context.Context, id int64) (domain.User, error) {
-	row, err := r.q.GetUser(ctx, id)
+	row, err := r.q(ctx).GetUser(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.User{}, application.ErrNotFound
 	}
@@ -57,7 +61,7 @@ func (r *Repository) Get(ctx context.Context, id int64) (domain.User, error) {
 }
 
 func (r *Repository) GetByEmail(ctx context.Context, email string) (domain.User, error) {
-	row, err := r.q.GetUserByEmail(ctx, email)
+	row, err := r.q(ctx).GetUserByEmail(ctx, email)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.User{}, application.ErrNotFound
 	}
@@ -68,7 +72,7 @@ func (r *Repository) GetByEmail(ctx context.Context, email string) (domain.User,
 }
 
 func (r *Repository) GetCredentialsByEmail(ctx context.Context, email string) (application.Credentials, error) {
-	row, err := r.q.GetCredentialsByEmail(ctx, email)
+	row, err := r.q(ctx).GetCredentialsByEmail(ctx, email)
 	if errors.Is(err, sql.ErrNoRows) {
 		return application.Credentials{}, application.ErrNotFound
 	}
@@ -79,12 +83,12 @@ func (r *Repository) GetCredentialsByEmail(ctx context.Context, email string) (a
 }
 
 func (r *Repository) Create(ctx context.Context, u application.NewUser) (int64, error) {
-	id, err := r.q.CreateUser(ctx, sqlc.CreateUserParams{Name: u.Name, Email: u.Email, PasswordHash: u.PasswordHash, IsActive: u.IsActive})
+	id, err := r.q(ctx).CreateUser(ctx, sqlc.CreateUserParams{Name: u.Name, Email: u.Email, PasswordHash: u.PasswordHash, IsActive: u.IsActive})
 	return id, duplicate(err)
 }
 
 func (r *Repository) UpdateName(ctx context.Context, id int64, name string) error {
-	n, err := r.q.UpdateUserName(ctx, sqlc.UpdateUserNameParams{Name: name, ID: id})
+	n, err := r.q(ctx).UpdateUserName(ctx, sqlc.UpdateUserNameParams{Name: name, ID: id})
 	if err != nil {
 		return err
 	}
@@ -97,7 +101,7 @@ func (r *Repository) UpdateName(ctx context.Context, id int64, name string) erro
 }
 
 func (r *Repository) Update(ctx context.Context, u domain.User) error {
-	n, err := r.q.UpdateUser(ctx, sqlc.UpdateUserParams{Name: u.Name, Email: u.Email, IsActive: u.IsActive, ID: u.ID})
+	n, err := r.q(ctx).UpdateUser(ctx, sqlc.UpdateUserParams{Name: u.Name, Email: u.Email, IsActive: u.IsActive, ID: u.ID})
 	if err != nil {
 		return duplicate(err)
 	}
@@ -111,7 +115,7 @@ func (r *Repository) Update(ctx context.Context, u domain.User) error {
 }
 
 func (r *Repository) UpdatePassword(ctx context.Context, id int64, hash string, at time.Time) error {
-	return r.q.UpdatePassword(ctx, sqlc.UpdatePasswordParams{PasswordHash: hash, PasswordChangedAt: sql.NullTime{Time: at, Valid: true}, ID: id})
+	return r.q(ctx).UpdatePassword(ctx, sqlc.UpdatePasswordParams{PasswordHash: hash, PasswordChangedAt: sql.NullTime{Time: at, Valid: true}, ID: id})
 }
 
 // duplicate maps MySQL's duplicate-key error on the email index to ErrEmailTaken.

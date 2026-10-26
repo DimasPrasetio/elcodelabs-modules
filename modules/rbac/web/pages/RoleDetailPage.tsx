@@ -19,7 +19,7 @@ import { RoleFormDialog } from "@/modules/rbac/components/RoleFormDialog";
 import { RBAC_PATHS } from "@/modules/rbac/paths";
 import { deleteRole, fetchCatalog, fetchMembers, fetchRole, removeMember, updateRole } from "@/modules/rbac/services/rbac.service";
 import { WILDCARD } from "@/modules/rbac/types/rbac";
-import type { Permission, RbacUser, Role } from "@/modules/rbac/types/rbac";
+import type { Permission, RbacMember, Role } from "@/modules/rbac/types/rbac";
 
 function byModule(catalog: Permission[]): [string, Permission[]][] {
   const groups = new Map<string, Permission[]>();
@@ -32,7 +32,7 @@ export default function RoleDetailPage() {
   const navigate = useNavigate();
   const [role, setRole] = useState<Role | null>(null);
   const [catalog, setCatalog] = useState<Permission[]>([]);
-  const [members, setMembers] = useState<RbacUser[]>([]);
+  const [members, setMembers] = useState<RbacMember[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -40,7 +40,7 @@ export default function RoleDetailPage() {
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [removing, setRemoving] = useState<RbacUser | null>(null);
+  const [removing, setRemoving] = useState<RbacMember | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -174,10 +174,13 @@ export default function RoleDetailPage() {
             ) : (
               <ul className="divide-y divide-border">
                 {members.map((m) => (
-                  <li key={m.id} className="flex items-center justify-between gap-3 px-5 py-3">
+                  <li key={`${m.id}:${m.branch_id}`} className="flex items-center justify-between gap-3 px-5 py-3">
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium">{m.missing ? `Pengguna #${m.id}` : m.name}</div>
-                      <div className="truncate text-xs text-muted-foreground">{m.missing ? "Sudah tidak ada" : m.email}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {m.missing ? "Sudah tidak ada" : m.email}
+                        {m.branch_id !== 0 && ` · hanya cabang #${m.branch_id}`}
+                      </div>
                     </div>
                     <Button
                       variant="ghost"
@@ -202,7 +205,7 @@ export default function RoleDetailPage() {
         onClose={() => setAdding(false)}
         roleId={role.id}
         roleName={role.name}
-        memberIds={new Set(members.map((m) => m.id))}
+        memberIds={new Set(members.filter((m) => m.branch_id === 0).map((m) => m.id))}
         onAdded={() => void fetchMembers(role.id).then(setMembers)}
       />
       <ConfirmDialog
@@ -213,7 +216,7 @@ export default function RoleDetailPage() {
         confirmLabel="Cabut peran"
         onConfirm={async () => {
           if (!removing) return;
-          await removeMember(role.id, removing.id);
+          await removeMember(role.id, removing.id, removing.branch_id);
           notify.success("Peran dicabut");
           setMembers(await fetchMembers(role.id));
         }}

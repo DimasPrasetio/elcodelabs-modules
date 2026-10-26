@@ -14,6 +14,8 @@ const (
 	AdminRole = "Administrator"
 	// Wildcard grants every permission, including ones modules declare later.
 	Wildcard = "*"
+	// PermManage is the permission to manage roles and who holds them.
+	PermManage = "rbac.manage"
 
 	MaxNameLength        = 80
 	MaxDescriptionLength = 255

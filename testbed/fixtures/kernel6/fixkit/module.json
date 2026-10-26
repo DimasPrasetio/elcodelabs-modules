@@ -1,0 +1,12 @@
+{
+  "id": "fixkit",
+  "version": "0.1.0",
+  "kind": "gokit",
+  "title": "Fixture kit",
+  "summary": "Testbed fixture: a Go kit — shared Go code installed into internal/shared.",
+  "when_to_use": ["Never in a project: the testbed proves Go kits with it."],
+  "when_not_to_use": ["Always."],
+  "stacks": ["go"],
+  "requires_kernel": 6,
+  "install": { "lib": "apps/api/internal/shared/fixkit" }
+}

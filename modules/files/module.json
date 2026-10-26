@@ -1,6 +1,6 @@
 {
   "id": "files",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "kind": "fullstack",
   "title": "Files",
   "summary": "Stores uploaded files for other modules (FileClient): streamed to DATA_DIR on disk, type decided from the content (no SVG/HTML), size-capped, hashed; deleted files kept 30 days. An administrator's page lists, downloads, and deletes them.",
@@ -14,7 +14,7 @@
   "stacks": [
     "go"
   ],
-  "requires_kernel": 5,
+  "requires_kernel": 6,
   "provides": {
     "contracts": [
       "FileClient"
@@ -38,6 +38,7 @@
       "description": "Menghapus berkas"
     }
   ],
+  "scoped": true,
   "owns_tables": [
     "files"
   ],

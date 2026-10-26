@@ -3,7 +3,7 @@
   "modules": [
     {
       "id": "app-shell",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "kind": "web",
       "title": "App shell",
       "summary": "The frame around protected pages: collapsible sidebar built from every module's nav, inset canvas, breadcrumb header, and slots for a user menu.",
@@ -14,7 +14,7 @@
         "Public sites, single-screen tools, or full-screen modes (a POS on a tablet): give those their own layout."
       ],
       "stacks": [],
-      "requires_kernel": 3,
+      "requires_kernel": 6,
       "provides": {
         "contracts": [],
         "kernel": []
@@ -24,11 +24,15 @@
       "ui": [
         "ui-core"
       ],
-      "owns_tables": []
+      "go_kits": [],
+      "owns_tables": [],
+      "scoped": false,
+      "emits": [],
+      "listens": []
     },
     {
       "id": "audit-log",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "kind": "fullstack",
       "title": "Audit log",
       "summary": "The audit trail: fills the kernel's d.Audit, so every module's d.Audit.Record lands in one append-only table (who, what, target, before/after, IP, request ID), kept AUDIT_RETENTION_DAYS; a read-only \"Log aktivitas\" page with filters and details.",
@@ -41,7 +45,7 @@
       "stacks": [
         "go"
       ],
-      "requires_kernel": 5,
+      "requires_kernel": 6,
       "provides": {
         "contracts": [],
         "kernel": [
@@ -67,13 +71,17 @@
         "ui-forms",
         "ui-feedback"
       ],
+      "go_kits": [],
       "owns_tables": [
         "audit_log"
-      ]
+      ],
+      "scoped": true,
+      "emits": [],
+      "listens": []
     },
     {
       "id": "auth",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "kind": "fullstack",
       "title": "Authentication",
       "summary": "Email + password sign-in with server-side sessions (sign-out, deactivation, and a password change end them), layered sign-in limits, change your own password, and forgot-password by email; the frontend guard, sign-in and password pages, and the user menu. Fills the kernel's d.Auth.",
@@ -87,7 +95,7 @@
       "stacks": [
         "go"
       ],
-      "requires_kernel": 5,
+      "requires_kernel": 6,
       "provides": {
         "contracts": [],
         "kernel": [
@@ -126,14 +134,18 @@
         "ui-forms",
         "ui-feedback"
       ],
+      "go_kits": [],
       "owns_tables": [
         "auth_sessions",
         "auth_password_resets"
-      ]
+      ],
+      "scoped": false,
+      "emits": [],
+      "listens": []
     },
     {
       "id": "files",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "kind": "fullstack",
       "title": "Files",
       "summary": "Stores uploaded files for other modules (FileClient): streamed to DATA_DIR on disk, type decided from the content (no SVG/HTML), size-capped, hashed; deleted files kept 30 days. An administrator's page lists, downloads, and deletes them.",
@@ -147,7 +159,7 @@
       "stacks": [
         "go"
       ],
-      "requires_kernel": 5,
+      "requires_kernel": 6,
       "provides": {
         "contracts": [
           "FileClient"
@@ -165,16 +177,20 @@
         "ui-forms",
         "ui-feedback"
       ],
+      "go_kits": [],
       "owns_tables": [
         "files"
-      ]
+      ],
+      "scoped": true,
+      "emits": [],
+      "listens": []
     },
     {
       "id": "mailer",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "kind": "fullstack",
       "title": "Mailer",
-      "summary": "Sends the app's email: modules queue a message (MailClient) and a background job delivers it over SMTP with retries; an outbox page shows what was sent and what failed. Development without SMTP writes email to the log.",
+      "summary": "Sends the app's email: modules queue a message (MailClient) — inside their own transaction — and a kernel task delivers it over SMTP with retries; an outbox page shows what was sent and what failed. Development without SMTP writes email to the log.",
       "when_to_use": [
         "Any module needs to email people: password reset, invitations, notifications, documents."
       ],
@@ -185,7 +201,7 @@
       "stacks": [
         "go"
       ],
-      "requires_kernel": 5,
+      "requires_kernel": 6,
       "provides": {
         "contracts": [
           "MailClient"
@@ -203,28 +219,32 @@
         "ui-forms",
         "ui-feedback"
       ],
+      "go_kits": [],
       "owns_tables": [
         "mail_outbox"
-      ]
+      ],
+      "scoped": false,
+      "emits": [],
+      "listens": []
     },
     {
       "id": "rbac",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "kind": "fullstack",
       "title": "Roles and permissions (RBAC)",
-      "summary": "Who may do what: roles hold permissions that modules declare, users hold roles. Fills the kernel's d.Authz; Roles page with a per-module permission editor and members; Administrator role with every permission.",
+      "summary": "Who may do what: roles hold permissions that modules declare, users hold roles per company — across it or in one branch. Fills the kernel's d.Authz (and Units for branches); Roles page with a per-module permission editor and members; Administrator role with every permission.",
       "when_to_use": [
         "Different people need different access: admins, staff, read-only viewers.",
         "Any app with more than one kind of user, once auth is in."
       ],
       "when_not_to_use": [
         "Every signed-in user may do everything — without rbac that is already the policy.",
-        "Access that depends on the record itself (only your branch's invoices): rbac grants per action, not per row — build that in the module that owns the data."
+        "Access that depends on the record itself (only invoices you created): rbac grants per action and says which branches it reaches (d.Authz.Units) — filtering rows is the job of the module that owns them."
       ],
       "stacks": [
         "go"
       ],
-      "requires_kernel": 5,
+      "requires_kernel": 6,
       "provides": {
         "contracts": [],
         "kernel": [
@@ -250,28 +270,32 @@
         "ui-forms",
         "ui-feedback"
       ],
+      "go_kits": [],
       "owns_tables": [
         "roles",
         "role_permissions",
         "user_roles"
-      ]
+      ],
+      "scoped": false,
+      "emits": [],
+      "listens": []
     },
     {
       "id": "settings",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "kind": "fullstack",
       "title": "Settings",
-      "summary": "App-wide settings: the company profile (name, legal name, address, NPWP, phone, email, time zone, logo) other modules use on documents (SettingsClient), and a settings page other modules add sections to (slot settings:sections). Every change audited.",
+      "summary": "Settings per company: the company profile (name, legal name, address, NPWP, phone, email, time zone, logo) other modules use on documents (SettingsClient), and a settings page other modules add sections to (slot settings:sections). Scoped: each company keeps its own. Every change audited.",
       "when_to_use": [
         "The app prints or sends documents with the company's details, or needs one place for app-wide settings."
       ],
       "when_not_to_use": [
-        "Several companies (tenants) in one app — this keeps one profile."
+        "Preferences of one user (language, layout) — keep those with the module that owns them."
       ],
       "stacks": [
         "go"
       ],
-      "requires_kernel": 5,
+      "requires_kernel": 6,
       "provides": {
         "contracts": [
           "SettingsClient"
@@ -297,13 +321,17 @@
         "ui-forms",
         "ui-feedback"
       ],
+      "go_kits": [],
       "owns_tables": [
         "settings"
-      ]
+      ],
+      "scoped": true,
+      "emits": [],
+      "listens": []
     },
     {
       "id": "ui-core",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "kind": "ui",
       "title": "UI core kit",
       "summary": "Bingkai Navy foundation every screen uses: the restyled shadcn primitives, page layout (Page, PageHeader, SectionCard, SummaryCard), StatusBadge with fixed tones, Notice, empty/error/404 states, skeletons, DescriptionList, Money/Qty/DocNumber, Modal, FormSheet, and id-ID formatters.",
@@ -314,7 +342,7 @@
         "Never skipped when a module has a frontend."
       ],
       "stacks": [],
-      "requires_kernel": 3,
+      "requires_kernel": 6,
       "provides": {
         "contracts": [],
         "kernel": []
@@ -322,7 +350,11 @@
       "permissions": [],
       "ports": [],
       "ui": [],
-      "owns_tables": []
+      "go_kits": [],
+      "owns_tables": [],
+      "scoped": false,
+      "emits": [],
+      "listens": []
     },
     {
       "id": "ui-data",
@@ -347,7 +379,11 @@
       "ui": [
         "ui-core"
       ],
-      "owns_tables": []
+      "go_kits": [],
+      "owns_tables": [],
+      "scoped": false,
+      "emits": [],
+      "listens": []
     },
     {
       "id": "ui-feedback",
@@ -373,7 +409,11 @@
         "ui-core",
         "ui-forms"
       ],
-      "owns_tables": []
+      "go_kits": [],
+      "owns_tables": [],
+      "scoped": false,
+      "emits": [],
+      "listens": []
     },
     {
       "id": "ui-forms",
@@ -398,7 +438,11 @@
       "ui": [
         "ui-core"
       ],
-      "owns_tables": []
+      "go_kits": [],
+      "owns_tables": [],
+      "scoped": false,
+      "emits": [],
+      "listens": []
     },
     {
       "id": "ui-gallery",
@@ -426,11 +470,15 @@
         "ui-forms",
         "ui-feedback"
       ],
-      "owns_tables": []
+      "go_kits": [],
+      "owns_tables": [],
+      "scoped": false,
+      "emits": [],
+      "listens": []
     },
     {
       "id": "users",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "kind": "fullstack",
       "title": "Users",
       "summary": "The people who can sign in: list, search, add, edit, deactivate; each person's own profile page; first-user bootstrap from env. Offers UserClient (incl. SetPassword for an auth provider); every change audited; guarded by users.read / users.manage.",
@@ -443,7 +491,7 @@
       "stacks": [
         "go"
       ],
-      "requires_kernel": 5,
+      "requires_kernel": 6,
       "provides": {
         "contracts": [
           "UserClient"
@@ -461,9 +509,13 @@
         "ui-forms",
         "ui-feedback"
       ],
+      "go_kits": [],
       "owns_tables": [
         "users"
-      ]
+      ],
+      "scoped": false,
+      "emits": [],
+      "listens": []
     }
   ],
   "presets": [

@@ -10,7 +10,10 @@ import (
 type Entry struct {
 	ID         int64
 	OccurredAt time.Time
-	ActorID    int64 // 0: no one signed in
+	ActorID    int64  // 0: no one signed in
+	Kind       string // change | access | export | security
+	CompanyID  int64
+	BranchID   int64
 	Module     string
 	Action     string
 	Target     string

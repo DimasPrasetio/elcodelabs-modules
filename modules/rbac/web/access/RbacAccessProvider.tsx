@@ -43,8 +43,11 @@ export function RbacAccessProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     load();
     const off = onAppEvent("session:changed", load);
+    // Roles are held per company or branch: switching where the tab works changes what it may do.
+    const offScope = onAppEvent("scope:changed", load);
     return () => {
       off();
+      offScope();
       request.current++;
       if (timer.current !== null) window.clearTimeout(timer.current);
     };

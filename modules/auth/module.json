@@ -1,6 +1,6 @@
 {
   "id": "auth",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "kind": "fullstack",
   "title": "Authentication",
   "summary": "Email + password sign-in with server-side sessions (sign-out, deactivation, and a password change end them), layered sign-in limits, change your own password, and forgot-password by email; the frontend guard, sign-in and password pages, and the user menu. Fills the kernel's d.Auth.",
@@ -14,7 +14,7 @@
   "stacks": [
     "go"
   ],
-  "requires_kernel": 5,
+  "requires_kernel": 6,
   "provides": {
     "contracts": [],
     "kernel": [

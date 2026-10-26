@@ -10,18 +10,23 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, normalize, relative } from "node:path";
 
-const TOP_ENTRIES = new Set(["module.json", "README.md", "api", "web", "shared", "migrations", "adapters"]);
+const TOP_ENTRIES = new Set(["module.json", "README.md", "api", "web", "shared", "lib", "migrations", "adapters"]);
 const INSTALL_TARGET = {
   api: (id) => `apps/api/internal/modules/${id}`,
   web: (id) => `apps/web/src/modules/${id}`,
   shared: () => "apps/web/src/shared",
+  lib: (id) => `apps/api/internal/shared/${id}`,
 };
 const FOLDERS = {
   fullstack: { must: ["api", "web"], may: ["migrations", "adapters"] },
   backend: { must: ["api"], may: ["migrations", "adapters"] },
   web: { must: ["web"], may: ["shared"] },
   ui: { must: ["shared"], may: ["web"] },
+  // A Go kit: shared Go code (no tables, no wiring) installed into internal/shared/<id>.
+  gokit: { must: ["lib"], may: [] },
 };
+// Names a module publishes and subscribes under (kernel 6 d.Events).
+const EVENT_NAME = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9_-]*){2,}$/;
 const GO_LAYERS = ["contracts", "ports", "application", "domain", "infrastructure", "presentation"];
 // What a layer may not import from its own module (backend-modular-monolith.md › Strict
 // module structure): the domain and the public surfaces depend on nothing, use cases never on
@@ -34,7 +39,8 @@ const LAYER_FORBIDS = {
   infrastructure: ["presentation"],
   presentation: ["infrastructure"],
 };
-const GO_PROJECT_ALLOWED = /^__GO_MODULE__\/internal\/(kernel|config|shared\/[a-z0-9_/]+)$/;
+// kernel/kerneltest is the kernel's test kit (kernel 6) — a module's tests may use it.
+const GO_PROJECT_ALLOWED = /^__GO_MODULE__\/internal\/(kernel(\/kerneltest)?|config|shared\/[a-z0-9_/]+)$/;
 const GO_FORBIDDEN_DEPS = /^(gorm\.io\/|github\.com\/jmoiron\/sqlx|entgo\.io\/|xorm\.io\/|github\.com\/go-pg\/|github\.com\/uptrace\/bun)/;
 const PALETTE = "red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|slate|gray|zinc|neutral|stone";
 const RAW_COLOR = new RegExp(
@@ -45,6 +51,119 @@ const MIGRATION = /^(\d{3})_[a-z0-9_]+\.(up|down)\.sql$/;
 const WEB_SOURCE = /\.(tsx?|jsx?|mjs|css)$/;
 // Go modules the scaffolded kernel already requires: a module may import them without declaring.
 const KERNEL_GO_DEPS = ["github.com/go-sql-driver/mysql", "github.com/joho/godotenv"];
+// A Go kit installs beside the kernel's own internal/shared packages, and is imported beside
+// internal/kernel and internal/config — it cannot take one of their names.
+const sharedPackages = (root) => {
+  const dir = join(root, "kernel/host/apps/api/internal/shared");
+  return new Set(["kernel", "config", ...(existsSync(dir) ? readdirSync(dir) : [])]);
+};
+// Go source without its comments, and — bare — with every string's contents blanked too, so
+// text in a comment or a message never looks like code.
+const goSource = (src) => {
+  let code = "";
+  let bare = "";
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === "/" && src[i + 1] === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+      code += "\n";
+      bare += "\n";
+    } else if (c === "/" && src[i + 1] === "*") {
+      const end = src.indexOf("*/", i + 2);
+      i = end < 0 ? src.length : end + 1;
+      code += " ";
+      bare += " ";
+    } else if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c && !(c !== "`" && src[j] === "\n")) j += src[j] === "\\" && c !== "`" ? 2 : 1;
+      code += src.slice(i, j + 1);
+      bare += c + " ".repeat(Math.max(0, j - i - 1)) + c;
+      i = j;
+    } else {
+      code += c;
+      bare += c;
+    }
+  }
+  return { code, bare };
+};
+// SQL with its subqueries blanked: what is left is the statement's own level (a parenthesized
+// condition stays).
+const topLevel = (sql) => {
+  let s = sql;
+  for (;;) {
+    const next = s.replace(/\(([^()]*)\)/g, (_, inner) => (/\bSELECT\b/i.test(inner) ? " ".repeat(inner.length + 2) : `\u0001${inner}\u0002`));
+    if (next === s) break;
+    s = next;
+  }
+  return s.replace(/\u0001/g, "(").replace(/\u0002/g, ")");
+};
+// Every SELECT of a UNION compares company_id in its own WHERE (not in an ORDER BY after it).
+const whereNamesCompany = (sql) =>
+  topLevel(sql).split(/\bUNION\b(?:\s+ALL\b)?/i).every((part) => {
+    const at = part.search(/\bWHERE\b/i);
+    const where = at < 0 ? "" : part.slice(at).split(/\b(?:GROUP|ORDER)\s+BY\b|\bLIMIT\b|\bHAVING\b|\bFOR\s+(?:UPDATE|SHARE)\b/i)[0];
+    return /\bcompany_id\b\s*(?:=|<=>|\bIN\b)/i.test(where);
+  });
+// The arguments of every call to .<method>( in Go code, split at the call's own commas.
+function callArgs(code, method) {
+  const out = [];
+  const re = new RegExp(`\\.${method}\\(`, "g");
+  for (let m = re.exec(code); m; m = re.exec(code)) {
+    const args = [];
+    let depth = 0;
+    let cur = "";
+    for (let i = m.index + m[0].length; i < code.length; i++) {
+      const c = code[i];
+      if (c === '"' || c === "`" || c === "'") {
+        const end = code.indexOf(c, i + 1);
+        cur += code.slice(i, end + 1);
+        i = end;
+      } else if ("([{".includes(c)) {
+        depth++;
+        cur += c;
+      } else if (")]}".includes(c)) {
+        if (depth === 0) {
+          args.push(cur.trim());
+          break;
+        }
+        depth--;
+        cur += c;
+      } else if (c === "," && depth === 0) {
+        args.push(cur.trim());
+        cur = "";
+      } else cur += c;
+    }
+    out.push(args);
+  }
+  return out;
+}
+// The primary and unique keys a table ends with, through every migration in order.
+function finalKeys(statements, table) {
+  const keys = new Map();
+  const t = escapeRe(table);
+  for (const st of statements) {
+    const create = st.match(new RegExp(`^\\s*CREATE TABLE(?:\\s+IF NOT EXISTS)?\\s+\`?${t}\`?\\s*\\(([\\s\\S]*)\\)`, "i"));
+    const alter = st.match(new RegExp(`^\\s*ALTER TABLE\\s+\`?${t}\`?\\s+([\\s\\S]*)$`, "i"));
+    const body = create?.[1] ?? alter?.[1];
+    if (!body) continue;
+    if (alter) {
+      if (/\bDROP\s+PRIMARY\s+KEY\b/i.test(body)) keys.delete("PRIMARY");
+      for (const [, n] of body.matchAll(/\bDROP\s+(?:KEY|INDEX)\s+`?(\w+)`?/gi)) keys.delete(n);
+    }
+    const cols = String.raw`\(((?:[^()]|\(\d+\))*)\)`; // a prefix length, name(20), inside
+    for (const [, c] of body.matchAll(new RegExp(String.raw`\bPRIMARY\s+KEY\s*` + cols, "gi"))) keys.set("PRIMARY", c);
+    for (const [, n, c] of body.matchAll(new RegExp(String.raw`\bUNIQUE\s+(?:KEY|INDEX)?\s*` + "`?(\\w*)`?\\s*" + cols, "gi"))) keys.set(n || c, c);
+    // A column declared UNIQUE or PRIMARY KEY on its own line.
+    for (const [, c] of body.matchAll(/(?:^|,|\bADD\s+(?:COLUMN\s+)?)\s*`?(\w+)`?\s+[A-Z]+[^,]*?\b(UNIQUE|PRIMARY\s+KEY)\b(?!\s*(?:KEY|INDEX)?\s*`?\w*`?\s*\()/gi)) {
+      keys.set(c, c);
+    }
+  }
+  for (const st of statements) {
+    const index = st.match(new RegExp(`^\\s*CREATE\\s+UNIQUE\\s+INDEX\\s+\`?(\\w+)\`?\\s+ON\\s+\`?${t}\`?\\s*\\(([^;]*)\\)\\s*$`, "i"));
+    if (index) keys.set(index[1], index[2]);
+  }
+  return keys;
+}
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // Table names a statement reads or writes. "ON UPDATE", "KEY UPDATE", and "FOR UPDATE" are
 // clauses, not tables.
@@ -122,7 +241,7 @@ export function checkModules(root, modules, problem) {
       if (!want) problem(at, `install-targets: "${folder}" cannot be installed — only api, web, shared`);
       else if (target !== want(id)) problem(at, `install-targets: ${folder} must install to ${want(id)}, not ${target}`);
     }
-    for (const f of ["api", "web", "shared"]) {
+    for (const f of ["api", "web", "shared", "lib"]) {
       if (existsSync(join(dir, f)) && !m.install?.[f]) problem(at, `install-targets: ${f}/ exists but install has no "${f}"`);
     }
 
@@ -136,7 +255,9 @@ export function checkModules(root, modules, problem) {
     }
 
     // --- backend -------------------------------------------------------------------------
-    if (existsSync(join(dir, "api"))) checkGo(root, id, m, problem);
+    if (existsSync(join(dir, "api"))) checkGo(root, id, m, byId, problem);
+    if (existsSync(join(dir, "lib"))) checkGoKit(root, id, m, byId, problem);
+    checkKernelSeams(root, id, m, byId, problem);
     if (existsSync(join(dir, "adapters"))) checkAdapters(root, id, m, byId, problem);
     checkMigrations(root, id, m, problem);
 
@@ -185,7 +306,7 @@ export function checkModules(root, modules, problem) {
     if (stack.includes(id)) return problem(`modules/${id}`, `declared-kits: kit cycle ${[...stack, id].join(" → ")}`);
     if (seen.has(id)) return;
     seen.add(id);
-    for (const k of byId.get(id)?.ui ?? []) visit(k, [...stack, id]);
+    for (const k of [...(byId.get(id)?.ui ?? []), ...(byId.get(id)?.go_kits ?? [])]) visit(k, [...stack, id]);
   };
   for (const { id } of modules) visit(id, []);
 }
@@ -193,12 +314,19 @@ export function checkModules(root, modules, problem) {
 function kindWhy(kind, folder) {
   if (kind === "ui") return "ui kits are frontend-only";
   if (kind === "web") return "web modules have no backend";
+  if (kind === "gokit") return "a Go kit is shared Go code only — tables and wiring belong in a module";
   if (kind === "backend") return "backend modules have no frontend";
   if (folder === "shared") return "only ui kits and web modules install into shared/ — put module UI in web/";
   return "";
 }
 
-function checkGo(root, id, m, problem) {
+/** The Go kit an import names, when it names one (internal/shared/<kit>[/…]). */
+function goKitOf(imp, byId) {
+  const kit = imp.match(/^__GO_MODULE__\/internal\/shared\/([a-z0-9-]+)(?:\/|$)/)?.[1];
+  return kit && byId.get(kit)?.kind === "gokit" ? kit : null;
+}
+
+function checkGo(root, id, m, byId, problem) {
   const at = `modules/${id}`;
   const api = join(root, "modules", id, "api");
   if (!existsSync(join(api, `${id}.module.go`))) problem(at, `go-module-contract: api/${id}.module.go is missing (New, Routes, Client live there)`);
@@ -218,6 +346,8 @@ function checkGo(root, id, m, problem) {
         if (layer && LAYER_FORBIDS[layer]?.includes(own[1])) problem(at, `go-layers: api/${f} (${layer}) imports ${own[1]} — ${layer} may not depend on ${own[1]}`);
         continue;
       }
+      const kit = goKitOf(imp, byId);
+      if (kit && !(m.go_kits ?? []).includes(kit)) problem(at, `declared-go-kits: api/${f} imports the Go kit ${kit} — add "${kit}" to "go_kits" in module.json`);
       if (/^__GO_MODULE__\/internal\/modules\//.test(imp)) problem(at, `no-module-imports: api/${f} imports ${imp.replace("__GO_MODULE__/", "")} — declare a port instead`);
       else if (imp.startsWith("__GO_MODULE__/") && !GO_PROJECT_ALLOWED.test(imp)) problem(at, `kernel-only: api/${f} imports ${imp.replace("__GO_MODULE__/", "")} — a module builds on kernel, config, and shared only`);
       else if (GO_FORBIDDEN_DEPS.test(imp)) problem(at, `sqlc-not-orm: api/${f} imports ${imp} — data access is database/sql + sqlc`);
@@ -238,6 +368,147 @@ function checkGo(root, id, m, problem) {
     for (const [, t] of sql.matchAll(SQL_TABLE_REFS)) {
       if (SQL_WORDS.has(t.toLowerCase()) || owned.has(t)) continue;
       problem(at, `own-tables-only: infrastructure/queries/${f} uses "${t}", which is not in owns_tables — ask its owner through a port`);
+    }
+  }
+}
+
+/** A Go kit: pure Go code — the standard library, its declared dependencies, other Go kits. */
+function checkGoKit(root, id, m, byId, problem) {
+  const at = `modules/${id}`;
+  const pkg = id.replace(/-/g, "");
+  if (sharedPackages(root).has(pkg)) problem(at, `gokit-pure: "${id}" is a package the kernel's internal/shared already has — name the kit differently`);
+  for (const f of walk(join(root, "modules", id, "lib"))) {
+    if (!f.endsWith(".go")) continue;
+    const src = readFileSync(join(root, "modules", id, "lib", f), "utf8");
+    if (!f.includes("/") && !new RegExp(`^package ${pkg}(_test)?\\b`, "m").test(src)) problem(at, `gokit-pure: lib/${f} must be package ${pkg}`);
+    for (const imp of goImports(src)) {
+      if (imp.startsWith("__GO_MODULE__/")) {
+        const kit = goKitOf(imp, byId);
+        if (!kit) problem(at, `gokit-pure: lib/${f} imports ${imp.replace("__GO_MODULE__/", "")} — a Go kit builds on the standard library and other Go kits only`);
+        else if (!(m.go_kits ?? []).includes(kit)) problem(at, `declared-go-kits: lib/${f} imports the Go kit ${kit} — add "${kit}" to "go_kits"`);
+      } else if (imp.split("/")[0].includes(".")) {
+        const declared = [...KERNEL_GO_DEPS, ...Object.keys(m.go_dependencies ?? {})].some((d) => imp === d || imp.startsWith(`${d}/`));
+        if (!declared) problem(at, `declared-go-deps: lib/${f} imports ${imp} — add it to "go_dependencies"`);
+      }
+    }
+    if (/\bos\.(Getenv|LookupEnv|Environ)\(/.test(src)) problem(at, `gokit-pure: lib/${f} reads the environment — a kit takes its settings from the module that calls it`);
+  }
+}
+
+/**
+ * Kernel 6 seams: the kernel's tables are its own; a module on kernel 6 works inside d.Tx;
+ * scoped data is filtered by company explicitly; events are declared where they are published
+ * or heard.
+ */
+function checkKernelSeams(root, id, m, byId, problem) {
+  const at = `modules/${id}`;
+  const api = join(root, "modules", id, "api");
+  for (const t of m.owns_tables ?? []) {
+    if (t.startsWith("kernel_")) problem(at, `kernel-tables: "${t}" — tables named kernel_* belong to the kernel`);
+  }
+  const goFiles = walk(api).filter((f) => f.endsWith(".go")).map((f) => [f, goSource(readFileSync(join(api, f), "utf8"))]);
+  if ((m.requires_kernel ?? 0) >= 6) {
+    for (const [f, { code, bare }] of goFiles) {
+      if (/\.BeginTx\(|\.Begin\(\)/.test(bare)) problem(at, `tx-aware: api/${f} opens its own transaction — use d.Tx.Do, so a caller's transaction is joined`);
+      if (f.endsWith("_test.go")) continue; // tests may build fakes on the pool
+      if (/\b\w+\.DB\b/.test(bare)) problem(at, `tx-aware: api/${f} uses the kernel's DB — reach the database through d.Tx (d.Tx.Conn(ctx)), so a caller's transaction is joined`);
+      const sqlPkg = ["sql", ...[...code.matchAll(/\b(\w+)\s+"database\/sql"/g)].map((x) => x[1])];
+      if (new RegExp(`\\b(?:${sqlPkg.join("|")})\\.Open(?:DB)?\\(`).test(bare)) problem(at, `tx-aware: api/${f} opens its own pool — the app has one, reached through d.Tx`);
+      const sqlcNames = ["sqlc", ...[...code.matchAll(/\b(\w+)\s+"__GO_MODULE__\/[^"]*\/sqlc"/g)].map((x) => x[1])];
+      // Function by function: a variable holding d.Tx.Conn(ctx) is the transaction too.
+      for (const fn of bare.split(/^func\b/m)) {
+        // A conn taken before a d.Tx.Do is the pool, not the transaction Do starts.
+        const firstDo = fn.search(/\.Do\(/);
+        const conns = new Set();
+        for (const x of fn.matchAll(/\b(\w+)\s*:?=\s*[\w.]*\.Conn\(\w+\)/g)) {
+          if (firstDo >= 0 && x.index < firstDo && new RegExp(`\\b${x[1]}\\b`).test(fn.slice(firstDo))) {
+            problem(at, `tx-aware: api/${f} takes ${x[1]} before d.Tx.Do and uses it inside — take it from the ctx Do passes in`);
+          }
+          conns.add(x[1]);
+        }
+        const onTx = (expr) => /\.Conn\(\w+\)$/.test(expr.trim()) || conns.has(expr.trim());
+        for (const name of sqlcNames) {
+          for (const [, arg] of fn.matchAll(new RegExp(`\\b${name}\\.New\\(([^)]*\\)?)\\)`, "g"))) {
+            if (!onTx(arg)) problem(at, `tx-aware: api/${f} builds queries on ${arg.trim() || "nothing"} — build them per call with sqlc.New(tx.Conn(ctx)) so they run inside d.Tx`);
+          }
+        }
+        for (const [call, recv] of fn.matchAll(/([\w.]*(?:\([^()]*\))?)\.(?:Exec|Query|QueryRow|Prepare)(?:Context)?\((?!\))/g)) {
+          if (!onTx(recv)) problem(at, `tx-aware: api/${f} runs SQL through ${call.slice(0, -1)} — write it as a sqlc query, or run it on d.Tx.Conn(ctx)`);
+        }
+      }
+    }
+  }
+  if (m.scoped) checkScoped(root, id, m, problem);
+  // Events: published names are this module's own and declared; subscriptions are declared and
+  // wired only in the composition root.
+  const emits = new Set((m.emits ?? []).map((e) => e.name));
+  for (const e of m.emits ?? []) {
+    if (!EVENT_NAME.test(e.name ?? "") || !e.name.startsWith(`${id}.`)) problem(at, `events-declared: emits "${e.name}" must be ${id}.<thing>.<past-verb>`);
+    if (!Number.isInteger(e.version) || e.version < 1) problem(at, `events-declared: emits "${e.name}" needs a version ≥ 1`);
+  }
+  const versions = new Map((m.emits ?? []).map((e) => [e.name, e.version]));
+  for (const [f, { code: src }] of goFiles) {
+    if (f.endsWith("_test.go")) continue; // a subscriber's test may publish what it listens to
+    // Any Publish(ctx, name, version, payload) — through d.Events or whatever holds it.
+    for (const args of callArgs(src, "Publish")) {
+      if (args.length !== 4) continue;
+      const [, arg, version] = args;
+      const name = arg.match(/^"([^"]+)"$/)?.[1];
+      if (!name) problem(at, `events-declared: api/${f} publishes ${arg} — name the event with a string literal, so it is checked against "emits"`);
+      else if (!emits.has(name)) problem(at, `events-declared: api/${f} publishes "${name}" — declare it in "emits"`);
+      else if (String(versions.get(name)) !== version) problem(at, `events-declared: api/${f} publishes "${name}" version ${version} — "emits" declares version ${versions.get(name)}`);
+    }
+    if (/\b[Ee]vents\.On\(|\.On\(\s*"[a-z][\w-]*\.[\w-]+\.[\w-]+"/.test(src)) problem(at, `events-declared: api/${f} subscribes in code — declare it in "listens"; the composition root wires it`);
+  }
+  const known = new Set([...byId.values()].flatMap((x) => (x.emits ?? []).map((e) => e.name)));
+  for (const l of m.listens ?? []) {
+    if (!l.subscriber?.startsWith(`${id}.`)) problem(at, `events-declared: listens subscriber "${l.subscriber}" must be ${id}.<reaction>`);
+    if (!known.has(l.event)) problem(at, `events-declared: listens to "${l.event}", which no module in the library emits`);
+    if (!l.handler) problem(at, `events-declared: listens to "${l.event}" without a handler (a Go expression on the module, e.g. ${id.replace(/-./g, (s) => s[1].toUpperCase())}Module.OnX)`);
+  }
+}
+
+/** Every table of a scoped module carries company_id, and every query filters by it. */
+function checkScoped(root, id, m, problem) {
+  const at = `modules/${id}`;
+  const migrations = walk(join(root, "modules", id, "migrations")).filter((f) => f.endsWith(".up.sql")).sort()
+    .map((f) => readFileSync(join(root, "modules", id, "migrations", f), "utf8").replace(/--.*$/gm, "")).join("\n");
+  const statements = migrations.split(";");
+  for (const t of m.owns_tables ?? []) {
+    const create = migrations.match(new RegExp(`CREATE TABLE(?:\\s+IF NOT EXISTS)?\\s+\`?${escapeRe(t)}\`?\\s*\\(([^;]*);`, "i"))?.[1] ?? "";
+    const added = new RegExp(`ALTER TABLE\\s+\`?${escapeRe(t)}\`?[^;]*ADD\\s+(?:COLUMN\\s+)?\`?company_id\`?`, "i").test(migrations);
+    if (!/\bcompany_id\b/.test(create) && !added) problem(at, `scoped-tables: table "${t}" has no company_id — a scoped module's tables belong to a company`);
+    // A business key is unique per company, or an upsert reaches another company's row.
+    for (const [key, cols] of finalKeys(statements, t)) {
+      const names = cols.split(",").map((c) => c.replace(/[`\s]/g, "").replace(/\(\d+\)$/, "").replace(/(ASC|DESC)$/i, ""));
+      if (!(names.length === 1 && names[0] === "id") && !names.includes("company_id")) {
+        problem(at, `scoped-tables: table "${t}" key ${key === "PRIMARY" ? "PRIMARY" : `"${key}"`} (${names.join(", ")}) has no company_id — make it unique per company`);
+      }
+    }
+  }
+  const queries = join(root, "modules", id, "api", "infrastructure", "queries");
+  for (const f of walk(queries)) {
+    if (!f.endsWith(".sql")) continue;
+    const blocks = readFileSync(join(queries, f), "utf8").split(/^-- name:/m).slice(1);
+    for (const block of blocks) {
+      const name = block.trim().split(/\s+/)[0];
+      // A system job working across every company (a purge, a retention sweep) says so, and its
+      // name says so wherever it is called.
+      if (/^\s*--\s*all companies\b/im.test(block)) {
+        if (!name.startsWith("System")) problem(at, `scoped-queries: infrastructure/queries/${f} ${name} spans every company — name it System…, so its callers see that`);
+        continue;
+      }
+      const sql = block.replace(/--.*$/gm, "").replace(/^\s*\S+\s+:\w+/, "");
+      const touches = (m.owns_tables ?? []).some((t) => new RegExp(`\\b${escapeRe(t)}\\b`).test(sql));
+      if (!touches) continue;
+      // In the statement's own WHERE (not a subquery's); an INSERT names it among its columns,
+      // and an INSERT … SELECT filters what it copies too.
+      const insert = sql.match(/^\s*(?:INSERT|REPLACE)\s+(?:IGNORE\s+)?INTO\s+\S+\s*\(([^)]*)\)/i);
+      const copies = insert && /^\s*SELECT\b/i.test(sql.slice(insert.index + insert[0].length));
+      const filtered = insert
+        ? /\bcompany_id\b/.test(insert[1]) && (!copies || whereNamesCompany(sql.slice(insert.index + insert[0].length)))
+        : whereNamesCompany(sql);
+      if (!filtered) problem(at, `scoped-queries: infrastructure/queries/${f} ${name} does not ${insert ? "insert company_id" : "filter by company_id in its WHERE"} — work in the request's company explicitly, or mark a system query that spans every company with a line "-- all companies" and a System… name`);
     }
   }
 }

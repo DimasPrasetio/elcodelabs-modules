@@ -22,6 +22,7 @@ import (
 type memRepo struct {
 	rows    map[int64]*domain.Stored
 	deleted map[int64]time.Time
+	locked  map[int64]bool
 	next    int64
 }
 
@@ -37,22 +38,32 @@ func (m *memRepo) Get(_ context.Context, id int64) (domain.Stored, error) {
 	if _, gone := m.deleted[id]; !ok || gone {
 		return domain.Stored{}, contracts.ErrNotFound
 	}
-	return *f, nil
+	out := *f
+	out.Locked = m.locked[id]
+	return out, nil
 }
 
 func (m *memRepo) SoftDelete(_ context.Context, id int64, at time.Time) (bool, error) {
-	if _, gone := m.deleted[id]; gone {
+	if _, gone := m.deleted[id]; gone || m.locked[id] {
 		return false, nil
 	}
 	m.deleted[id] = at
 	return true, nil
 }
 
+func (m *memRepo) Lock(_ context.Context, id int64, _ time.Time) error {
+	if m.locked == nil {
+		m.locked = map[int64]bool{}
+	}
+	m.locked[id] = true
+	return nil
+}
+
 func (m *memRepo) List(context.Context, string, string, pagination.Params) ([]domain.Stored, int64, error) {
 	return nil, 0, nil
 }
 
-func (m *memRepo) PurgeCandidates(_ context.Context, before time.Time) ([]application.Purgeable, error) {
+func (m *memRepo) SystemPurgeCandidates(_ context.Context, before time.Time) ([]application.Purgeable, error) {
 	var out []application.Purgeable
 	for id, at := range m.deleted {
 		if at.Before(before) {
@@ -149,5 +160,22 @@ func TestRefusedUploadsLeaveNothingBehind(t *testing.T) {
 	}
 	if _, err := svc.Save(context.Background(), contracts.Upload{Owner: "../etc", Name: "a.png", Reader: bytes.NewReader(png)}); err == nil {
 		t.Fatal("an owner that is not a module id was accepted")
+	}
+}
+
+func TestALockedFileCannotBeDeleted(t *testing.T) {
+	svc, _, _ := setup(t)
+	f, err := svc.Save(context.Background(), contracts.Upload{Owner: "sales", Name: "faktur.pdf", Reader: strings.NewReader("%PDF-1.7\n%…\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Lock(context.Background(), f.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Delete(context.Background(), f.ID); !errors.Is(err, contracts.ErrLocked) {
+		t.Fatalf("a locked file was deleted: %v", err)
+	}
+	if got, _ := svc.Get(context.Background(), f.ID); !got.Locked {
+		t.Fatal("the file does not say it is locked")
 	}
 }

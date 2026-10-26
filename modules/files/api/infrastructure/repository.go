@@ -8,6 +8,7 @@ import (
 	"errors"
 	"time"
 
+	"__GO_MODULE__/internal/kernel"
 	"__GO_MODULE__/internal/modules/files/application"
 	"__GO_MODULE__/internal/modules/files/contracts"
 	"__GO_MODULE__/internal/modules/files/domain"
@@ -19,22 +20,28 @@ var _ application.Repository = (*Repository)(nil)
 
 // Repository implements application.Repository.
 type Repository struct {
-	q *sqlc.Queries
+	tx *kernel.TxSlot
 }
 
-func NewRepository(db *sql.DB) *Repository {
-	return &Repository{q: sqlc.New(db)}
+func NewRepository(tx *kernel.TxSlot) *Repository {
+	return &Repository{tx: tx}
 }
+
+// q runs on the transaction in ctx when there is one (d.Tx), else on the pool.
+func (r *Repository) q(ctx context.Context) *sqlc.Queries { return sqlc.New(r.tx.Conn(ctx)) }
+
+// company is the company the request works in (kernel 6 scope).
+func company(ctx context.Context) int64 { return kernel.ScopeFrom(ctx).CompanyID }
 
 func (r *Repository) Create(ctx context.Context, f domain.Stored) (int64, error) {
-	return r.q.CreateFile(ctx, sqlc.CreateFileParams{
-		Owner: f.Owner, Name: f.Name, ContentType: f.ContentType, Size: f.Size, Sha256: f.SHA256, StorageKey: f.Key,
+	return r.q(ctx).CreateFile(ctx, sqlc.CreateFileParams{
+		CompanyID: company(ctx), Owner: f.Owner, Name: f.Name, ContentType: f.ContentType, Size: f.Size, Sha256: f.SHA256, StorageKey: f.Key,
 		CreatedAt: f.CreatedAt, CreatedBy: sql.NullInt64{Int64: f.CreatedBy, Valid: f.CreatedBy != 0},
 	})
 }
 
 func (r *Repository) Get(ctx context.Context, id int64) (domain.Stored, error) {
-	row, err := r.q.GetFile(ctx, id)
+	row, err := r.q(ctx).GetFile(ctx, sqlc.GetFileParams{ID: id, CompanyID: company(ctx)})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Stored{}, contracts.ErrNotFound
 	}
@@ -42,33 +49,37 @@ func (r *Repository) Get(ctx context.Context, id int64) (domain.Stored, error) {
 		return domain.Stored{}, err
 	}
 	return domain.Stored{ID: row.ID, Owner: row.Owner, Name: row.Name, ContentType: row.ContentType, Size: row.Size, SHA256: row.Sha256,
-		Key: row.StorageKey, CreatedAt: row.CreatedAt, CreatedBy: row.CreatedBy.Int64}, nil
+		Key: row.StorageKey, CreatedAt: row.CreatedAt, CreatedBy: row.CreatedBy.Int64, Locked: row.LockedAt.Valid}, nil
 }
 
 func (r *Repository) SoftDelete(ctx context.Context, id int64, at time.Time) (bool, error) {
-	n, err := r.q.SoftDeleteFile(ctx, sqlc.SoftDeleteFileParams{DeletedAt: sql.NullTime{Time: at, Valid: true}, ID: id})
+	n, err := r.q(ctx).SoftDeleteFile(ctx, sqlc.SoftDeleteFileParams{DeletedAt: sql.NullTime{Time: at, Valid: true}, ID: id, CompanyID: company(ctx)})
 	return n > 0, err
 }
 
+func (r *Repository) Lock(ctx context.Context, id int64, at time.Time) error {
+	return r.q(ctx).LockFile(ctx, sqlc.LockFileParams{LockedAt: sql.NullTime{Time: at, Valid: true}, ID: id, CompanyID: company(ctx)})
+}
+
 func (r *Repository) List(ctx context.Context, owner, search string, p pagination.Params) ([]domain.Stored, int64, error) {
-	rows, err := r.q.ListFiles(ctx, sqlc.ListFilesParams{Owner: owner, Search: search, Limit: int32(p.Limit), Offset: int32(p.Offset())})
+	rows, err := r.q(ctx).ListFiles(ctx, sqlc.ListFilesParams{CompanyID: company(ctx), Owner: owner, Search: search, Limit: int32(p.Limit), Offset: int32(p.Offset())})
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := r.q.CountFiles(ctx, sqlc.CountFilesParams{Owner: owner, Search: search})
+	total, err := r.q(ctx).CountFiles(ctx, sqlc.CountFilesParams{CompanyID: company(ctx), Owner: owner, Search: search})
 	if err != nil {
 		return nil, 0, err
 	}
 	out := make([]domain.Stored, len(rows))
 	for i, row := range rows {
 		out[i] = domain.Stored{ID: row.ID, Owner: row.Owner, Name: row.Name, ContentType: row.ContentType, Size: row.Size, SHA256: row.Sha256,
-			Key: row.StorageKey, CreatedAt: row.CreatedAt, CreatedBy: row.CreatedBy.Int64}
+			Key: row.StorageKey, CreatedAt: row.CreatedAt, CreatedBy: row.CreatedBy.Int64, Locked: row.LockedAt.Valid}
 	}
 	return out, total, nil
 }
 
-func (r *Repository) PurgeCandidates(ctx context.Context, before time.Time) ([]application.Purgeable, error) {
-	rows, err := r.q.PurgeCandidates(ctx, sql.NullTime{Time: before, Valid: true})
+func (r *Repository) SystemPurgeCandidates(ctx context.Context, before time.Time) ([]application.Purgeable, error) {
+	rows, err := r.q(ctx).SystemPurgeCandidates(ctx, sql.NullTime{Time: before, Valid: true})
 	if err != nil {
 		return nil, err
 	}
@@ -80,5 +91,5 @@ func (r *Repository) PurgeCandidates(ctx context.Context, before time.Time) ([]a
 }
 
 func (r *Repository) DeleteRow(ctx context.Context, id int64) error {
-	return r.q.DeleteFileRow(ctx, id)
+	return r.q(ctx).SystemDeleteFileRow(ctx, id)
 }

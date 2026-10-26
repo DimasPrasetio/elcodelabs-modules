@@ -83,7 +83,7 @@ scripts/catalog.mjs  validates manifests and the architecture rules (scripts/lib
 kernel/              the pinned kernel: host/ (a scaffolded project), reference/, kernel.lock.json — read-only
 scripts/testbed.mjs  installs modules into fresh copies of the pinned host and tests them end to end
 scripts/sandbox.mjs  a project from the pinned host with the modules you name, to develop and try them
-scripts/kernel-sync.mjs  the maintainer's tool to pin a released kernel (kernel/ only, its own commit)
+scripts/kernel-sync.mjs  the maintainer's tool to pin a released kernel (kernel/ and its catalog, own commit)
 scripts/module.mjs   the CLI projects use (add, status, upgrade, detach, promote, …)
 scripts/lib/         install/upgrade core, library reader (working tree or a commit), promote
 testbed/fixtures/    project-side code the testbed needs (e.g. a project-owned UserStore)
@@ -110,6 +110,7 @@ Scenarios:
 | `auth-alone` | auth runs on a UserStore the project wrote itself — no users module, no mailer: password features report themselves off and the optional ports are `nil` |
 | `users-alone` | users runs without any auth provider; its guarded routes refuse (401) |
 | `lifecycle` | the CLI on a throwaway git copy of the library: add (and a refused add), status, upgrade merging the project's and the library's changes (then the project still builds), a conflicting upgrade, detach, wiring a port later (the consumer moves after its provider in the registry), remove, release-tag fallback, promote (refused when the module imports another or breaks an architecture rule), and the pinned kernel: an edit to it, a module needing a newer kernel, and a kernel update mixed with a module change are refused |
+| `kernel6` | fixture modules (`testbed/fixtures/kernel6`: a Go kit, two scoped modules joined by a port, a stand-in for auth and organization) against MySQL: an order and its stock in one `d.Tx` across modules (a refused order leaves nothing), an event delivered once across two containers, companies kept apart and an unplaced scope refused, a missed calendar tick caught up once; and the rules refusing a query without `company_id`, a module opening its own transaction, and an undeclared event |
 
 A new module is done when its README and `module.json` are complete, the catalog check passes,
 and a testbed scenario covers it.

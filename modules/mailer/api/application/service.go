@@ -4,6 +4,7 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -18,31 +19,41 @@ import (
 // ErrNotFound means no message has that ID.
 var ErrNotFound = errors.New("message not found")
 
-// How a delivery run behaves. A claimed batch is leased for longer than the slowest it can
-// take, so a message is only released to another run when its run is gone.
+// TaskDeliver is the task that sends one message (kernel d.Tasks); one per attempt.
+const TaskDeliver = "mailer.deliver"
+
+// How delivery behaves.
 const (
-	batchSize   = 10
-	maxBatches  = 10 // per run: at most 100 messages, then the next run continues
 	sendTimeout = time.Minute
-	lease       = batchSize*sendTimeout + time.Minute
 	markTimeout = 10 * time.Second
 	keepSent    = 30 * 24 * time.Hour
 	keepFailed  = 90 * 24 * time.Hour
+	// staleAfter is how long a message may sit due without a delivery before Rescue queues one.
+	staleAfter = 10 * time.Minute
 )
 
-// Repository is the outbox table.
+// Repository is the outbox table — the history of every email and its outcome. Delivery
+// itself is a kernel task per attempt.
 type Repository interface {
 	Enqueue(ctx context.Context, m domain.Message) (int64, error)
-	// Claim marks up to limit due messages as sending until now+lease and returns them; messages
-	// another run holds are skipped.
-	Claim(ctx context.Context, now time.Time, limit int, lease time.Duration) ([]domain.Message, error)
+	// Get returns the message, or ErrNotFound.
+	Get(ctx context.Context, id int64) (domain.Message, error)
+	// ClaimAttempt marks attempt as under way until until — only while it is the message's next
+	// attempt and no other delivery of it holds the message; false otherwise.
+	ClaimAttempt(ctx context.Context, id int64, attempt int, now, until time.Time) (bool, error)
+	// ReleaseAttempt gives up the claim on attempt without counting it.
+	ReleaseAttempt(ctx context.Context, id int64, attempt int) error
+	// Postpone moves the due time of a message still waiting for attempt and due before
+	// staleBefore — Rescue's claim on queuing that attempt; false when it is not.
+	Postpone(ctx context.Context, id int64, attempt int, until, staleBefore time.Time) (bool, error)
 	// MarkSent records the delivery and clears the bodies: a sent message is never sent again,
 	// and what it said (a reset link, say) does not stay in the database.
-	MarkSent(ctx context.Context, id int64, at time.Time) error
+	MarkSent(ctx context.Context, id int64, attempts int, at time.Time) error
 	MarkFailedAttempt(ctx context.Context, id int64, status string, attempts int, next time.Time, lastErr string) error
-	ReleaseStuck(ctx context.Context, now time.Time) (int64, error)
 	Requeue(ctx context.Context, id int64, now time.Time) (bool, error)
 	Prune(ctx context.Context, sentBefore, failedBefore time.Time) (int64, error)
+	// Stale lists up to 100 unsettled messages (pending or sending) due before before.
+	Stale(ctx context.Context, before time.Time) ([]domain.Message, error)
 	List(ctx context.Context, status, search string, p pagination.Params) ([]domain.Message, int64, error)
 }
 
@@ -88,77 +99,137 @@ type Service struct {
 	transport Transport
 	from      Sender
 	audit     Auditor
+	tx        *kernel.TxSlot
+	tasks     *kernel.TasksSlot
 	now       func() time.Time
 }
 
-func NewService(repo Repository, transport Transport, from Sender, audit Auditor) *Service {
-	return &Service{repo: repo, transport: transport, from: from, audit: audit, now: func() time.Time { return time.Now().UTC() }}
+func NewService(repo Repository, transport Transport, from Sender, audit Auditor, tx *kernel.TxSlot, tasks *kernel.TasksSlot) *Service {
+	return &Service{repo: repo, transport: transport, from: from, audit: audit, tx: tx, tasks: tasks, now: func() time.Time { return time.Now().UTC() }}
 }
 
-// Send validates and queues a message; delivery happens in the background.
+// RegisterTasks declares the delivery task — called in New. It runs outside a transaction (it
+// talks to a mail server) and records each outcome itself; a crash between the server's
+// acceptance and that record sends the message again (at least once).
+func (s *Service) RegisterTasks() {
+	s.tasks.Register(TaskDeliver, s.Deliver, kernel.TaskKind{Lane: kernel.LaneShort, Timeout: 2 * sendTimeout, MaxAttempts: 10, NonTransactional: true})
+}
+
+// delivery is one attempt at one message.
+type delivery struct {
+	ID      int64 `json:"id"`
+	Attempt int   `json:"attempt"`
+}
+
+func (s *Service) next(ctx context.Context, id int64, attempt int, at time.Time) error {
+	return s.tasks.Enqueue(ctx, TaskDeliver, delivery{ID: id, Attempt: attempt}, kernel.At(at), kernel.Dedupe(fmt.Sprintf("%d:%d", id, attempt)))
+}
+
+// Send validates and queues a message: the outbox row and its first delivery commit together —
+// inside the caller's d.Tx when there is one, so an email is sent only if what it tells about
+// happened. The request never waits for a mail server.
 func (s *Service) Send(ctx context.Context, m contracts.Message) (int64, error) {
 	if err := domain.Validate(m.To, m.ToName, m.Subject, m.Text, m.HTML); err != nil {
 		return 0, fmt.Errorf("%w: %v", contracts.ErrInvalid, err)
 	}
 	now := s.now()
-	return s.repo.Enqueue(ctx, domain.Message{To: m.To, ToName: m.ToName, Subject: m.Subject, Text: m.Text, HTML: m.HTML, NextAttemptAt: now, CreatedAt: now})
-}
-
-// DeliverDue sends what is due — the job the module schedules. Each message is attempted once
-// per run; a failure is retried later with growing waits.
-func (s *Service) DeliverDue(ctx context.Context) error {
-	if _, err := s.repo.ReleaseStuck(ctx, s.now()); err != nil {
-		return err
-	}
-	for range maxBatches {
-		msgs, err := s.repo.Claim(ctx, s.now(), batchSize, lease)
-		if err != nil {
+	var id int64
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		var err error
+		if id, err = s.repo.Enqueue(ctx, domain.Message{To: m.To, ToName: m.ToName, Subject: m.Subject, Text: m.Text, HTML: m.HTML, NextAttemptAt: now, CreatedAt: now}); err != nil {
 			return err
 		}
-		for _, m := range msgs {
-			if ctx.Err() != nil {
-				return nil // shutting down: what is left is released when its lease ends
-			}
-			if err := s.deliver(ctx, m); err != nil {
-				return err
-			}
-		}
-		if len(msgs) < batchSize {
-			return nil
-		}
-	}
-	return nil
+		return s.next(ctx, id, 1, now)
+	})
+	return id, err
 }
 
-// deliver sends one message and records the outcome. A failed send is the message's problem
-// (retried later); a failed record is the run's — the database is unreachable, so the run stops.
-func (s *Service) deliver(ctx context.Context, m domain.Message) error {
+// Deliver makes one attempt at one message — the mailer.deliver task. A failure schedules the
+// next attempt after 1 min, 5 min, 30 min, 2 h, then 6 h; a permanent refusal (SMTP 5xx) or the
+// sixth failure marks the message failed for an administrator to retry.
+func (s *Service) Deliver(ctx context.Context, t kernel.Task) error {
+	var d delivery
+	if err := json.Unmarshal(t.Payload, &d); err != nil {
+		return fmt.Errorf("mailer: task %d: %w", t.ID, err)
+	}
+	m, err := s.repo.Get(ctx, d.ID)
+	if errors.Is(err, ErrNotFound) {
+		return nil // pruned
+	}
+	if err != nil {
+		return err
+	}
+	if m.Status == domain.StatusSent || m.Status == domain.StatusFailed {
+		return nil // already settled — an attempt repeated after a crash
+	}
+	// One delivery per attempt: another task for it (a rescue, a retry after a lost record) or a
+	// later attempt already queued finds the message taken, and stops.
+	if ok, err := s.repo.ClaimAttempt(ctx, m.ID, d.Attempt, s.now(), s.now().Add(2*sendTimeout+markTimeout)); err != nil || !ok {
+		return err
+	}
 	html := ""
 	if m.HTML != "" {
 		html = Layout(s.from.AppName, m.Subject, m.HTML)
 	}
 	sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
-	err := s.transport.Send(sendCtx, Envelope{ID: m.ID, From: s.from.Address, FromName: s.from.Name, To: m.To, ToName: m.ToName, Subject: m.Subject, Text: m.Text, HTML: html})
+	sendErr := s.transport.Send(sendCtx, Envelope{ID: m.ID, From: s.from.Address, FromName: s.from.Name, To: m.To, ToName: m.ToName, Subject: m.Subject, Text: m.Text, HTML: html})
 	cancel()
-	// The outcome is recorded even when the app is shutting down: an unrecorded delivery would be
-	// sent again once its lease ends.
+	// The outcome is recorded even when the app is shutting down: an unrecorded delivery would
+	// be sent again.
 	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), markTimeout)
 	defer cancel()
 	now := s.now()
-	if err == nil {
-		if err := s.repo.MarkSent(markCtx, m.ID, now); err != nil {
+	if sendErr != nil && ctx.Err() != nil {
+		// Cut short by shutdown: not the message's failure. The task goes back in the queue and
+		// this attempt is made again.
+		if err := s.repo.ReleaseAttempt(markCtx, m.ID, d.Attempt); err != nil {
+			return errors.Join(ctx.Err(), err)
+		}
+		return ctx.Err()
+	}
+	if sendErr == nil {
+		if err := s.repo.MarkSent(markCtx, m.ID, d.Attempt, now); err != nil {
 			return fmt.Errorf("mail %d was sent but not recorded, and may be sent again: %w", m.ID, err)
 		}
 		return nil
 	}
-	attempts := m.Attempts + 1
-	status, next := domain.NextAttempt(attempts, errors.As(err, new(PermanentError)), now)
-	msg := err.Error()
+	status, next := domain.NextAttempt(d.Attempt, errors.As(sendErr, new(PermanentError)), now)
+	msg := sendErr.Error()
 	if len(msg) > 500 {
 		msg = msg[:500]
 	}
-	if err := s.repo.MarkFailedAttempt(markCtx, m.ID, status, attempts, next, msg); err != nil {
-		return fmt.Errorf("mail %d: recording a failed attempt: %w", m.ID, err)
+	return s.tx.Do(markCtx, func(ctx context.Context) error {
+		if err := s.repo.MarkFailedAttempt(ctx, m.ID, status, d.Attempt, next, msg); err != nil {
+			return err
+		}
+		if status == domain.StatusFailed {
+			return nil
+		}
+		return s.next(ctx, m.ID, d.Attempt+1, next)
+	})
+}
+
+// Rescue queues the next attempt of every message long due with no delivery under way — left
+// by an upgrade from the mailer's own worker (0.1), or by a delivery task that failed for good
+// before it could record the outcome. A message whose delivery task still waits is untouched
+// (the task's dedupe key, "<id>:<attempt>", is the same); one being sent was marked when the
+// attempt started. Each rescued message is postponed, so the next run reaches the ones after it.
+func (s *Service) Rescue(ctx context.Context) error {
+	stale, err := s.repo.Stale(ctx, s.now().Add(-staleAfter))
+	if err != nil {
+		return err
+	}
+	for _, m := range stale {
+		err := s.tx.Do(ctx, func(ctx context.Context) error {
+			ok, err := s.repo.Postpone(ctx, m.ID, m.Attempts+1, s.now(), s.now().Add(-staleAfter))
+			if err != nil || !ok {
+				return err // settled, attempted, or rescued since it was listed
+			}
+			return s.next(ctx, m.ID, m.Attempts+1, s.now())
+		})
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -182,12 +253,19 @@ func (s *Service) List(ctx context.Context, status, search string, p pagination.
 
 // Retry queues a failed message again, from its first attempt.
 func (s *Service) Retry(ctx context.Context, id int64) error {
-	ok, err := s.repo.Requeue(ctx, id, s.now())
+	now := s.now()
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		ok, err := s.repo.Requeue(ctx, id, now)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return apperror.Conflict("Hanya email yang gagal yang dapat dikirim ulang")
+		}
+		return s.next(ctx, id, 1, now)
+	})
 	if err != nil {
 		return err
-	}
-	if !ok {
-		return apperror.Conflict("Hanya email yang gagal yang dapat dikirim ulang")
 	}
 	s.audit.Record(ctx, kernel.AuditEntry{Module: "mailer", Action: "mail.requeued", Target: fmt.Sprintf("mail:%d", id), Summary: "Mengirim ulang email yang gagal"})
 	return nil

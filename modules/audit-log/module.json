@@ -1,6 +1,6 @@
 {
   "id": "audit-log",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "kind": "fullstack",
   "title": "Audit log",
   "summary": "The audit trail: fills the kernel's d.Audit, so every module's d.Audit.Record lands in one append-only table (who, what, target, before/after, IP, request ID), kept AUDIT_RETENTION_DAYS; a read-only \"Log aktivitas\" page with filters and details.",
@@ -13,7 +13,7 @@
   "stacks": [
     "go"
   ],
-  "requires_kernel": 5,
+  "requires_kernel": 6,
   "provides": {
     "contracts": [],
     "kernel": [
@@ -45,6 +45,7 @@
       "description": "Melihat log aktivitas"
     }
   ],
+  "scoped": true,
   "owns_tables": [
     "audit_log"
   ],

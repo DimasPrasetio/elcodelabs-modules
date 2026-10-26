@@ -1,0 +1,21 @@
+{
+  "id": "org6",
+  "version": "0.1.0",
+  "kind": "backend",
+  "title": "Fixture organization",
+  "summary": "Testbed fixture: signs a request in from X-Test-User and resolves its company/branch scope.",
+  "when_to_use": ["Never in a project: the testbed's stand-in for auth and an organization module."],
+  "when_not_to_use": ["Always."],
+  "stacks": ["go"],
+  "requires_kernel": 6,
+  "install": { "api": "apps/api/internal/modules/org6" },
+  "provides": { "kernel": ["auth", "scope"] },
+  "register": {
+    "go": {
+      "import": "internal/modules/org6",
+      "build": ["org6Module := org6.New(d)"],
+      "routes": ["org6Module.Routes(mux)"],
+      "after": ["d.Auth.Provide(org6Module.Authenticator())", "d.Scope.Provide(org6Module.Resolver())"]
+    }
+  }
+}

@@ -2,8 +2,12 @@ package application_test
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 
 	"__GO_MODULE__/internal/kernel"
@@ -16,32 +20,40 @@ import (
 // memRepo is an in-memory Repository seeded like the migration: Administrator holds "*".
 type memRepo struct {
 	roles   map[int64]domain.Role
-	members map[int64]map[int64]bool // role → users
+	members map[int64]map[unit]bool // role → assignments
 	nextID  int64
 }
+
+type unit struct{ user, company, branch int64 }
 
 func newMemRepo() *memRepo {
 	return &memRepo{
 		roles:   map[int64]domain.Role{1: {ID: 1, Name: domain.AdminRole, IsSystem: true, Permissions: []string{domain.Wildcard}}},
-		members: map[int64]map[int64]bool{1: {}},
+		members: map[int64]map[unit]bool{1: {}},
 		nextID:  1,
 	}
 }
 
-func (m *memRepo) ListRoles(context.Context) ([]domain.Role, error) {
+func (m *memRepo) ListRoles(_ context.Context, company int64) ([]domain.Role, error) {
 	var out []domain.Role
-	for _, r := range m.roles {
+	for id := range m.roles {
+		r, _ := m.GetRole(context.Background(), company, id)
 		out = append(out, r)
 	}
 	return out, nil
 }
 
-func (m *memRepo) GetRole(_ context.Context, id int64) (domain.Role, error) {
+func (m *memRepo) GetRole(_ context.Context, company, id int64) (domain.Role, error) {
 	r, ok := m.roles[id]
 	if !ok {
 		return domain.Role{}, application.ErrNotFound
 	}
-	r.MemberCount = int64(len(m.members[id]))
+	r.MemberCount = 0
+	for u := range m.members[id] {
+		if u.company == company {
+			r.MemberCount++
+		}
+	}
 	return r, nil
 }
 
@@ -62,7 +74,7 @@ func (m *memRepo) CreateRole(_ context.Context, name, desc string, perms []strin
 	}
 	m.nextID++
 	m.roles[m.nextID] = domain.Role{ID: m.nextID, Name: name, Description: desc, Permissions: perms}
-	m.members[m.nextID] = map[int64]bool{}
+	m.members[m.nextID] = map[unit]bool{}
 	return m.nextID, nil
 }
 
@@ -79,33 +91,63 @@ func (m *memRepo) DeleteRole(_ context.Context, id int64) error {
 	return nil
 }
 
-func (m *memRepo) Members(_ context.Context, roleID int64) ([]int64, error) {
-	var ids []int64
-	for id := range m.members[roleID] {
-		ids = append(ids, id)
+func (m *memRepo) Members(_ context.Context, company, roleID int64) ([]application.Assignment, error) {
+	var out []application.Assignment
+	for u := range m.members[roleID] {
+		if u.company == company {
+			out = append(out, application.Assignment{UserID: u.user, BranchID: u.branch})
+		}
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	return ids, nil
+	sort.Slice(out, func(i, j int) bool { return out[i].UserID < out[j].UserID })
+	return out, nil
 }
 
-func (m *memRepo) AddMember(_ context.Context, roleID, userID int64) error {
-	m.members[roleID][userID] = true
+func (m *memRepo) AddMember(_ context.Context, company, branch, roleID, userID int64) error {
+	m.members[roleID][unit{userID, company, branch}] = true
 	return nil
 }
 
-func (m *memRepo) RemoveMember(_ context.Context, roleID, userID int64) error {
-	if !m.members[roleID][userID] {
+func (m *memRepo) RemoveMember(_ context.Context, company, branch, roleID, userID int64) error {
+	k := unit{userID, company, branch}
+	if !m.members[roleID][k] {
 		return application.ErrNotFound
 	}
-	delete(m.members[roleID], userID)
+	delete(m.members[roleID], k)
 	return nil
 }
 
-func (m *memRepo) PermissionsOfUser(_ context.Context, userID int64) ([]string, error) {
-	var out []string
-	for roleID, users := range m.members {
-		if users[userID] {
-			out = append(out, m.roles[roleID].Permissions...)
+func (m *memRepo) LockMembers(ctx context.Context, company, roleID int64) ([]application.Assignment, error) {
+	return m.Members(ctx, company, roleID)
+}
+
+func (m *memRepo) LockRole(_ context.Context, id int64, _ bool) error {
+	if _, ok := m.roles[id]; !ok {
+		return application.ErrNotFound
+	}
+	return nil
+}
+
+func (m *memRepo) RoleCompanies(_ context.Context, roleID int64) ([]int64, error) {
+	seen := map[int64]bool{}
+	var out []int64
+	for u := range m.members[roleID] {
+		if !seen[u.company] {
+			seen[u.company] = true
+			out = append(out, u.company)
+		}
+	}
+	return out, nil
+}
+
+func (m *memRepo) GrantsOfUser(_ context.Context, userID int64) ([]application.Grant, error) {
+	var out []application.Grant
+	for roleID, units := range m.members {
+		for u := range units {
+			if u.user == userID {
+				for _, p := range m.roles[roleID].Permissions {
+					out = append(out, application.Grant{CompanyID: u.company, BranchID: u.branch, Permission: p})
+				}
+			}
 		}
 	}
 	return out, nil
@@ -137,15 +179,35 @@ var catalog = func() []kernel.Permission {
 	return []kernel.Permission{{Name: "rbac.manage"}, {Name: "users.manage"}, {Name: "users.read"}}
 }
 
+var people = directory{
+	1: {ID: 1, Email: "admin@example.com", IsActive: true},
+	2: {ID: 2, Email: "ana@example.com", IsActive: true},
+	3: {ID: 3, Email: "budi@example.com", IsActive: true},
+}
+
 func setup() (*application.Service, *memRepo) {
 	repo := newMemRepo()
-	users := directory{
-		1: {ID: 1, Email: "admin@example.com", IsActive: true},
-		2: {ID: 2, Email: "ana@example.com", IsActive: true},
-		3: {ID: 3, Email: "budi@example.com", IsActive: true},
-	}
-	return application.NewService(repo, users, catalog, noAudit{}), repo
+	return application.NewService(repo, tx, everywhere{}, people, catalog, noAudit{}), repo
 }
+
+// fresh is a new service over repo — grants are cached, and these tests change repo directly.
+func fresh(repo *memRepo) *application.Service {
+	return application.NewService(repo, tx, everywhere{}, people, catalog, noAudit{})
+}
+
+// everywhere places every user in every company and branch (an organization module's answer).
+type everywhere struct{}
+
+func (everywhere) Resolve(_ context.Context, _ int64, requested string) (kernel.Scope, error) {
+	var sc kernel.Scope
+	c, b, _ := strings.Cut(requested, ":")
+	sc.CompanyID, _ = strconv.ParseInt(c, 10, 64)
+	sc.BranchID, _ = strconv.ParseInt(b, 10, 64)
+	return sc, nil
+}
+
+// tx is the kernel's d.Tx without a database: fn runs, hooks follow.
+var tx = kernel.NewTxSlot(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 // admin is the bootstrapped Administrator; tests act as them unless they say otherwise.
 const admin = int64(1)
@@ -199,7 +261,7 @@ func TestRoleGrantsItsPermissionsOnly(t *testing.T) {
 	if len(role.Permissions) != 1 {
 		t.Fatalf("duplicates must collapse: %v", role.Permissions)
 	}
-	if err := svc.AddMember(ctx, admin, role.ID, 2); err != nil {
+	if err := svc.AddMember(ctx, admin, role.ID, 2, 0); err != nil {
 		t.Fatal(err)
 	}
 	if !svc.Can(ctx, 2, "users.read") || svc.Can(ctx, 2, "users.manage") {
@@ -233,7 +295,7 @@ func TestAdministratorRoleIsProtected(t *testing.T) {
 	if err := svc.DeleteRole(ctx, admin, 1); status(t, err) != http.StatusConflict {
 		t.Error("Administrator must not be deleted")
 	}
-	if err := svc.RemoveMember(ctx, admin, 1, 1); status(t, err) != http.StatusConflict {
+	if err := svc.RemoveMember(ctx, admin, 1, 1, 0); status(t, err) != http.StatusConflict {
 		t.Error("the last Administrator must keep the role")
 	}
 }
@@ -242,11 +304,11 @@ func TestChangesApplyImmediately(t *testing.T) {
 	svc, _ := setupWithAdmin(t)
 	ctx := context.Background()
 	role, _ := svc.CreateRole(ctx, admin, application.RoleInput{Name: "Editor", Permissions: []string{"users.manage"}})
-	_ = svc.AddMember(ctx, admin, role.ID, 2)
+	_ = svc.AddMember(ctx, admin, role.ID, 2, 0)
 	if !svc.Can(ctx, 2, "users.manage") {
 		t.Fatal("granted")
 	}
-	if err := svc.RemoveMember(ctx, admin, role.ID, 2); err != nil {
+	if err := svc.RemoveMember(ctx, admin, role.ID, 2, 0); err != nil {
 		t.Fatal(err)
 	}
 	if svc.Can(ctx, 2, "users.manage") {
@@ -256,7 +318,7 @@ func TestChangesApplyImmediately(t *testing.T) {
 
 func TestUnknownUserCannotGetARole(t *testing.T) {
 	svc, _ := setupWithAdmin(t)
-	if err := svc.AddMember(context.Background(), admin, 1, 99); status(t, err) != http.StatusNotFound {
+	if err := svc.AddMember(context.Background(), admin, 1, 99, 0); status(t, err) != http.StatusNotFound {
 		t.Fatal("want 404 for a user the directory does not know")
 	}
 }
@@ -269,7 +331,7 @@ func roleManager(t *testing.T, svc *application.Service) int64 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.AddMember(ctx, admin, role.ID, 2); err != nil {
+	if err := svc.AddMember(ctx, admin, role.ID, 2, 0); err != nil {
 		t.Fatal(err)
 	}
 	return 2
@@ -279,21 +341,21 @@ func TestRbacManageIsNoPathToMorePermissions(t *testing.T) {
 	svc, _ := setupWithAdmin(t)
 	ctx := context.Background()
 	mgr := roleManager(t, svc)
-	if err := svc.AddMember(ctx, mgr, 1, mgr); status(t, err) != http.StatusForbidden {
+	if err := svc.AddMember(ctx, mgr, 1, mgr, 0); status(t, err) != http.StatusForbidden {
 		t.Errorf("making yourself Administrator: want 403, got %v", err)
 	}
 	if _, err := svc.CreateRole(ctx, mgr, application.RoleInput{Name: "Mine", Permissions: []string{"users.manage"}}); status(t, err) != http.StatusForbidden {
 		t.Errorf("a role with a permission you lack: want 403, got %v", err)
 	}
 	editor, _ := svc.CreateRole(ctx, admin, application.RoleInput{Name: "Editor", Permissions: []string{"users.manage"}})
-	if err := svc.AddMember(ctx, mgr, editor.ID, mgr); status(t, err) != http.StatusForbidden {
+	if err := svc.AddMember(ctx, mgr, editor.ID, mgr, 0); status(t, err) != http.StatusForbidden {
 		t.Errorf("joining a stronger role: want 403, got %v", err)
 	}
 	if _, err := svc.UpdateRole(ctx, mgr, editor.ID, application.RoleInput{Name: "Editor", Permissions: []string{"users.read"}}); status(t, err) != http.StatusForbidden {
 		t.Errorf("editing a stronger role: want 403, got %v", err)
 	}
-	_ = svc.AddMember(ctx, admin, 1, 3) // a second administrator
-	if err := svc.RemoveMember(ctx, mgr, 1, 3); status(t, err) != http.StatusForbidden {
+	_ = svc.AddMember(ctx, admin, 1, 3, 0) // a second administrator
+	if err := svc.RemoveMember(ctx, mgr, 1, 3, 0); status(t, err) != http.StatusForbidden {
 		t.Errorf("demoting an administrator: want 403, got %v", err)
 	}
 	if svc.Can(ctx, mgr, "users.manage") {
@@ -312,14 +374,50 @@ func TestCovers(t *testing.T) {
 		t.Error("the administrator covers everyone")
 	}
 	if !svc.Covers(ctx, mgr, 3) {
-		t.Error("anyone covers a user with no permissions")
+		t.Error("someone with a company-wide role covers a user with no permissions")
+	}
+}
+
+func TestABranchRoleReachesNoAccount(t *testing.T) {
+	svc, _ := setupWithAdmin(t)
+	ctx := context.Background()
+	if err := svc.AddMember(ctx, admin, 1, 2, 5); err != nil { // Administrator in branch 5 only
+		t.Fatal(err)
+	}
+	if svc.Covers(in(1, 5), 2, 3) {
+		t.Fatal("a branch administrator may act on an account — accounts are app-wide")
+	}
+}
+
+// nowhere places nobody beyond company 1 itself (an app without an organization module).
+type nowhere struct{}
+
+func (nowhere) Resolve(_ context.Context, _ int64, requested string) (kernel.Scope, error) {
+	if requested == "1" {
+		return kernel.Scope{CompanyID: 1}, nil
+	}
+	return kernel.Scope{}, kernel.ErrScopeDenied
+}
+
+func TestARoleGoesOnlyWhereTheUserIsPlaced(t *testing.T) {
+	repo := newMemRepo()
+	svc := application.NewService(repo, tx, nowhere{}, people, catalog, noAudit{})
+	ctx := context.Background()
+	if ok, _ := svc.Bootstrap(ctx, "admin@example.com"); !ok {
+		t.Fatal("bootstrap")
+	}
+	if err := svc.AddMember(ctx, admin, 1, 2, 5); status(t, err) != http.StatusBadRequest {
+		t.Fatalf("a role in a branch the user is not placed in: %v", err)
+	}
+	if err := svc.AddMember(ctx, admin, 1, 2, 0); err != nil {
+		t.Fatalf("in the company they are placed in: %v", err)
 	}
 }
 
 func TestBootstrapReturnsWhenNoActiveAdministratorIsLeft(t *testing.T) {
 	repo := newMemRepo()
 	users := directory{1: {ID: 1, Email: "admin@example.com", IsActive: true}}
-	svc := application.NewService(repo, users, catalog, noAudit{})
+	svc := application.NewService(repo, tx, everywhere{}, users, catalog, noAudit{})
 	ctx := context.Background()
 	if ok, _ := svc.Bootstrap(ctx, "admin@example.com"); !ok {
 		t.Fatal("first bootstrap")
@@ -328,5 +426,136 @@ func TestBootstrapReturnsWhenNoActiveAdministratorIsLeft(t *testing.T) {
 	users[2] = ports.User{ID: 2, Email: "new@example.com", IsActive: true}
 	if ok, err := svc.Bootstrap(ctx, "new@example.com"); err != nil || !ok {
 		t.Fatalf("bootstrap must give the role again when no active administrator is left: %v %v", ok, err)
+	}
+}
+
+func in(company, branch int64) context.Context {
+	return kernel.WithScope(context.Background(), kernel.Scope{CompanyID: company, BranchID: branch})
+}
+
+func TestBranchRoleReachesOnlyItsBranch(t *testing.T) {
+	svc, _ := setupWithAdmin(t)
+	ctx := context.Background()
+	reader, err := svc.CreateRole(ctx, admin, application.RoleInput{Name: "Pembaca", Permissions: []string{"users.read"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AddMember(ctx, admin, reader.ID, 2, 5); err != nil {
+		t.Fatal(err)
+	}
+	if svc.Can(in(1, 0), 2, "users.read") || !svc.Can(in(1, 5), 2, "users.read") || svc.Can(in(1, 6), 2, "users.read") {
+		t.Fatal("a branch role must reach its branch only — not the whole company, not another branch")
+	}
+	if u, _ := svc.Units(in(1, 0), 2, "users.read"); u.AllBranches || len(u.BranchIDs) != 1 || u.BranchIDs[0] != 5 {
+		t.Fatalf("units at the company: %+v", u)
+	}
+	if u, _ := svc.Units(in(1, 0), admin, "users.read"); !u.AllBranches {
+		t.Fatalf("a company-wide administrator reaches every branch: %+v", u)
+	}
+	if svc.Can(in(2, 0), admin, "users.read") {
+		t.Fatal("company 1's administrator holds nothing in company 2")
+	}
+}
+
+func TestBranchAdministratorIsNoCompanyAdministrator(t *testing.T) {
+	svc, _ := setupWithAdmin(t)
+	ctx := context.Background()
+	if err := svc.AddMember(ctx, admin, 1, 2, 5); err != nil { // Administrator in branch 5
+		t.Fatal(err)
+	}
+	if svc.Covers(ctx, 2, admin) {
+		t.Fatal("a branch administrator may not act on a company-wide administrator")
+	}
+	if !svc.Covers(ctx, admin, 2) {
+		t.Fatal("the company-wide administrator covers a branch administrator")
+	}
+	if err := svc.AddMember(ctx, 2, 1, 3, 0); status(t, err) != http.StatusForbidden {
+		t.Fatalf("a branch administrator made someone company-wide Administrator: %v", err)
+	}
+	if err := svc.AddMember(ctx, 2, 1, 3, 5); err != nil {
+		t.Fatalf("within their branch they may: %v", err)
+	}
+	if err := svc.RemoveMember(ctx, admin, 1, admin, 0); status(t, err) != http.StatusConflict {
+		t.Fatalf("the last company-wide Administrator was removed: %v", err)
+	}
+}
+
+func TestAnAccountIsCoveredInEveryCompany(t *testing.T) {
+	svc, repo := setupWithAdmin(t)                       // user 1: Administrator of company 1
+	_ = repo.AddMember(context.Background(), 2, 0, 1, 2) // user 2: Administrator of company 2 only
+	if svc.Covers(in(2, 0), 2, admin) {
+		t.Fatal("company 2's administrator may act on the account of company 1's administrator")
+	}
+	if svc.Covers(in(1, 0), admin, 2) {
+		t.Fatal("company 1's administrator may act on the account of company 2's administrator")
+	}
+	_ = repo.AddMember(context.Background(), 2, 0, 1, admin)
+	if !fresh(repo).Covers(in(1, 0), admin, 2) {
+		t.Fatal("an administrator of both companies covers everyone")
+	}
+}
+
+func TestARoleChangeNeedsEveryCompanyItReaches(t *testing.T) {
+	svc, repo := setupWithAdmin(t)
+	ctx := context.Background()
+	reader, err := svc.CreateRole(ctx, admin, application.RoleInput{Name: "Pembaca", Permissions: []string{"users.read"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = repo.AddMember(ctx, 2, 0, reader.ID, 3) // the role has a member in company 2
+	if _, err := svc.UpdateRole(ctx, admin, reader.ID, application.RoleInput{Name: "Pembaca", Permissions: []string{"users.manage"}}); status(t, err) != http.StatusForbidden {
+		t.Fatalf("a change reaching company 2, by someone with no rights there: %v", err)
+	}
+	if err := svc.DeleteRole(ctx, admin, reader.ID); status(t, err) != http.StatusForbidden {
+		t.Fatalf("a deletion reaching company 2, by someone with no rights there: %v", err)
+	}
+	_ = repo.AddMember(ctx, 2, 0, 1, admin)
+	if _, err := fresh(repo).UpdateRole(ctx, admin, reader.ID, application.RoleInput{Name: "Pembaca", Permissions: []string{"users.manage"}}); err != nil {
+		t.Fatalf("an administrator of both companies may: %v", err)
+	}
+}
+
+func TestBranchManagersManageMembersOnlyInTheirBranch(t *testing.T) {
+	svc, _ := setupWithAdmin(t)
+	ctx := context.Background()
+	mgr, err := svc.CreateRole(ctx, admin, application.RoleInput{Name: "Pengelola", Permissions: []string{"rbac.manage", "users.read"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, _ := svc.CreateRole(ctx, admin, application.RoleInput{Name: "Pembaca", Permissions: []string{"users.read"}})
+	if err := svc.AddMember(ctx, admin, mgr.ID, 2, 5); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateRole(in(1, 5), 2, application.RoleInput{Name: "Baru", Permissions: []string{"users.read"}}); status(t, err) != http.StatusForbidden {
+		t.Fatalf("a branch manager defined a role for the whole app: %v", err)
+	}
+	if err := svc.AddMember(in(1, 5), 2, reader.ID, 3, 5); err != nil {
+		t.Fatalf("in their branch they may: %v", err)
+	}
+	if err := svc.AddMember(in(1, 5), 2, reader.ID, 3, 6); status(t, err) != http.StatusForbidden {
+		t.Fatalf("a branch manager gave a role in another branch: %v", err)
+	}
+	if err := svc.AddMember(in(1, 5), 2, reader.ID, 3, 0); status(t, err) != http.StatusForbidden {
+		t.Fatalf("a branch manager gave a role across the company: %v", err)
+	}
+}
+
+func TestTheLastActiveAdministratorStays(t *testing.T) {
+	repo := newMemRepo()
+	users := directory{
+		1: {ID: 1, Email: "admin@example.com", IsActive: true},
+		2: {ID: 2, Email: "gone@example.com", IsActive: false},
+	}
+	svc := application.NewService(repo, tx, everywhere{}, users, catalog, noAudit{})
+	ctx := context.Background()
+	if ok, _ := svc.Bootstrap(ctx, "admin@example.com"); !ok {
+		t.Fatal("bootstrap")
+	}
+	_ = repo.AddMember(ctx, 1, 0, 1, 2) // a deactivated administrator does not count
+	if err := svc.RemoveMember(ctx, admin, 1, admin, 0); status(t, err) != http.StatusConflict {
+		t.Fatalf("the last active administrator was removed: %v", err)
+	}
+	if err := svc.RemoveMember(ctx, admin, 1, 2, 0); err != nil {
+		t.Fatalf("removing the deactivated one: %v", err)
 	}
 }

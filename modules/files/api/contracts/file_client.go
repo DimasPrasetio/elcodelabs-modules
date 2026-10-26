@@ -14,6 +14,8 @@ var (
 	ErrNotFound = errors.New("file not found")
 	// ErrRejected means the upload was refused — its type or size; the text says which.
 	ErrRejected = errors.New("file rejected")
+	// ErrLocked means the file belongs to a posted document and cannot be deleted.
+	ErrLocked = errors.New("file locked")
 )
 
 // File is what is known about a stored file.
@@ -25,6 +27,7 @@ type File struct {
 	Size        int64
 	SHA256      string
 	CreatedAt   time.Time
+	Locked      bool // attached to a posted document: cannot be deleted
 }
 
 // Upload is a file to store. The reader is streamed to disk, never held in memory.
@@ -44,6 +47,10 @@ type FileClient interface {
 	Save(ctx context.Context, u Upload) (File, error)
 	Get(ctx context.Context, id int64) (File, error)
 	Open(ctx context.Context, id int64) (File, io.ReadSeekCloser, error)
-	// Delete removes the file from use at once; its bytes are purged 30 days later.
+	// Delete removes the file from use at once; its bytes are purged 30 days later. A locked
+	// file is refused (ErrLocked).
 	Delete(ctx context.Context, id int64) error
+	// Lock keeps the file for good — call it when the document it is attached to is posted, in
+	// the same d.Tx. The files are company-scoped: every call works in the ctx's company.
+	Lock(ctx context.Context, id int64) error
 }

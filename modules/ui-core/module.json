@@ -1,6 +1,6 @@
 {
   "id": "ui-core",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "kind": "ui",
   "title": "UI core kit",
   "summary": "Bingkai Navy foundation every screen uses: the restyled shadcn primitives, page layout (Page, PageHeader, SectionCard, SummaryCard), StatusBadge with fixed tones, Notice, empty/error/404 states, skeletons, DescriptionList, Money/Qty/DocNumber, Modal, FormSheet, and id-ID formatters.",
@@ -11,7 +11,7 @@
     "Never skipped when a module has a frontend."
   ],
   "stacks": [],
-  "requires_kernel": 3,
+  "requires_kernel": 6,
   "provides": {
     "contracts": [],
     "kernel": []

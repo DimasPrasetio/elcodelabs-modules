@@ -36,4 +36,7 @@ attachment — never rendered in the app) and delete (`files.manage`). Nav entry
 
 ## Changes
 
+- **0.2.0** — needs kernel 6. Scoped: files belong to a company (migration 002), and every
+  call works in the ctx's company. `FileClient.Lock` keeps a file attached to a posted document
+  for good — `Delete` then answers `ErrLocked`; the admin page marks locked files.
 - **0.1.0** — first version.

@@ -13,4 +13,5 @@ type Stored struct {
 	Key         string // where the bytes are, relative to the store's root
 	CreatedAt   time.Time
 	CreatedBy   int64
+	Locked      bool // attached to a posted document: never deleted
 }

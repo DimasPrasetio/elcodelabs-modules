@@ -166,14 +166,14 @@ func (s *Service) Login(ctx context.Context, email, password string, from Client
 		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		// What was typed is not an account, and may be a password typed in the wrong field:
 		// only a masked form is kept.
-		s.audit.Record(ctx, kernel.AuditEntry{Module: "auth", Action: "auth.sign_in_failed", Summary: "Gagal masuk sebagai " + maskEmail(email) + " (tidak terdaftar)"})
+		s.audit.Record(ctx, kernel.AuditEntry{Kind: kernel.AuditSecurity, Module: "auth", Action: "auth.sign_in_failed", Summary: "Gagal masuk sebagai " + maskEmail(email) + " (tidak terdaftar)"})
 		return Session{}, errInvalid
 	}
 	if err != nil {
 		return Session{}, err
 	}
 	if bcrypt.CompareHashAndPassword([]byte(cred.PasswordHash), []byte(password)) != nil {
-		s.audit.Record(ctx, kernel.AuditEntry{Module: "auth", Action: "auth.sign_in_failed", Target: userTarget(cred.UserID), Summary: "Gagal masuk sebagai " + email})
+		s.audit.Record(ctx, kernel.AuditEntry{Kind: kernel.AuditSecurity, Module: "auth", Action: "auth.sign_in_failed", Target: userTarget(cred.UserID), Summary: "Gagal masuk sebagai " + email})
 		return Session{}, errInvalid
 	}
 	if !cred.IsActive {
@@ -194,7 +194,7 @@ func (s *Service) Login(ctx context.Context, email, password string, from Client
 	if err != nil {
 		return Session{}, err
 	}
-	s.audit.Record(ctx, kernel.AuditEntry{Module: "auth", Action: "auth.signed_in", Actor: user.ID, Target: userTarget(user.ID), Summary: "Masuk"})
+	s.audit.Record(ctx, kernel.AuditEntry{Kind: kernel.AuditSecurity, Module: "auth", Action: "auth.signed_in", Actor: user.ID, Target: userTarget(user.ID), Summary: "Masuk"})
 	return session, nil
 }
 
@@ -272,6 +272,6 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	if err := s.sessions.Revoke(ctx, sid, s.now().UTC()); err != nil {
 		return err
 	}
-	s.audit.Record(ctx, kernel.AuditEntry{Module: "auth", Action: "auth.signed_out", Actor: uid, Target: userTarget(uid), Summary: "Keluar"})
+	s.audit.Record(ctx, kernel.AuditEntry{Kind: kernel.AuditSecurity, Module: "auth", Action: "auth.signed_out", Actor: uid, Target: userTarget(uid), Summary: "Keluar"})
 	return nil
 }

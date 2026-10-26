@@ -29,7 +29,7 @@ const SINCE = (() => {
   console.warn(`--since ${JSON.stringify(ref)} is not a commit here — checking history against ${fallback}`);
   return fallback;
 })();
-const KINDS = ["fullstack", "backend", "web", "ui"];
+const KINDS = ["fullstack", "backend", "web", "ui", "gokit"];
 const problems = [];
 const problem = (where, msg) => problems.push(`${where}: ${msg}`);
 
@@ -55,6 +55,17 @@ for (const { id, m } of modules) {
     if (!ids.has(kit)) problem(at, `ui kit "${kit}" is not in the library`);
     else if (modules.find((x) => x.id === kit).m.kind !== "ui") problem(at, `"${kit}" is not a ui kit`);
   }
+  for (const kit of m.go_kits ?? []) {
+    if (!ids.has(kit)) problem(at, `Go kit "${kit}" is not in the library`);
+    else if (modules.find((x) => x.id === kit).m.kind !== "gokit") problem(at, `"${kit}" is not a Go kit`);
+  }
+  if (m.scoped !== undefined && typeof m.scoped !== "boolean") problem(at, `"scoped" must be true or false`);
+  if (m.scoped && !(m.owns_tables ?? []).length) problem(at, `"scoped": true but the module owns no tables`);
+  for (const [field, keys] of [["emits", ["name", "version", "description"]], ["listens", ["event", "subscriber", "handler"]]]) {
+    if (m[field] !== undefined && !Array.isArray(m[field])) problem(at, `"${field}" must be a list`);
+    for (const e of m[field] ?? []) for (const k of keys) if (e[k] === undefined || e[k] === "") problem(at, `${field}: an entry is missing "${k}"`);
+  }
+  if ((m.emits?.length || m.listens?.length || m.scoped) && m.requires_kernel < 6) problem(at, `events and scope need kernel 6 — set "requires_kernel": 6`);
   for (const port of m.ports ?? []) {
     for (const [provider, a] of Object.entries(port.adapters ?? {})) {
       if (!ids.has(provider)) problem(at, `port ${port.name}: adapter for unknown module "${provider}"`);
@@ -110,7 +121,9 @@ const catalog = {
     requires_kernel: m.requires_kernel, provides: m.provides ?? {},
     permissions: (m.permissions ?? []).map((p) => p.name),
     ports: (m.ports ?? []).map((p) => ({ name: p.name, required: p.required, description: p.description, adapters: Object.keys(p.adapters ?? {}) })),
-    ui: m.ui ?? [], owns_tables: m.owns_tables ?? [],
+    ui: m.ui ?? [], go_kits: m.go_kits ?? [], owns_tables: m.owns_tables ?? [], scoped: Boolean(m.scoped),
+    emits: (m.emits ?? []).map((e) => ({ name: e.name, version: e.version, description: e.description })),
+    listens: (m.listens ?? []).map((l) => l.event),
   })),
   presets: presets.map(({ p }) => ({ id: p.id, version: p.version, title: p.title, summary: p.summary, when_to_use: p.when_to_use, when_not_to_use: p.when_not_to_use ?? [] })),
 };
@@ -129,9 +142,10 @@ const md = [
   "| Module | Kind | Version | Kernel ≥ | What it does | Offers | Needs (ports) | Permissions | Builds on |",
   "|---|---|---|---|---|---|---|---|---|",
   ...catalog.modules.map((m) => {
-    const offers = [...(m.provides.contracts ?? []), ...(m.provides.kernel ?? []).map((k) => `kernel ${k}`)].join(", ") || "—";
-    const needs = m.ports.map((p) => `${p.name}${p.required ? "" : " (optional)"}${p.adapters.length ? ` ← ${p.adapters.join(", ")}` : ""}`).join("; ") || "—";
-    return `| [${m.id}](modules/${m.id}/README.md) | ${m.kind} | ${m.version} | ${m.requires_kernel} | ${cell(m.summary)} | ${offers} | ${needs} | ${m.permissions.join(", ") || "—"} | ${m.ui.join(", ") || "—"} |`;
+    const offers = [...(m.provides.contracts ?? []), ...(m.provides.kernel ?? []).map((k) => `kernel ${k}`), ...m.emits.map((e) => `event ${e.name}`)].join(", ") || "—";
+    const needs = [...m.ports.map((p) => `${p.name}${p.required ? "" : " (optional)"}${p.adapters.length ? ` ← ${p.adapters.join(", ")}` : ""}`), ...m.listens.map((e) => `hears ${e}`)].join("; ") || "—";
+    const kind = m.scoped ? `${m.kind}, scoped` : m.kind;
+    return `| [${m.id}](modules/${m.id}/README.md) | ${kind} | ${m.version} | ${m.requires_kernel} | ${cell(m.summary)} | ${offers} | ${needs} | ${m.permissions.join(", ") || "—"} | ${[...m.ui, ...m.go_kits].join(", ") || "—"} |`;
   }),
   "",
   "### When to use",

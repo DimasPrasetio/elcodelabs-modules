@@ -1,9 +1,9 @@
 {
   "id": "mailer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "kind": "fullstack",
   "title": "Mailer",
-  "summary": "Sends the app's email: modules queue a message (MailClient) and a background job delivers it over SMTP with retries; an outbox page shows what was sent and what failed. Development without SMTP writes email to the log.",
+  "summary": "Sends the app's email: modules queue a message (MailClient) — inside their own transaction — and a kernel task delivers it over SMTP with retries; an outbox page shows what was sent and what failed. Development without SMTP writes email to the log.",
   "when_to_use": [
     "Any module needs to email people: password reset, invitations, notifications, documents."
   ],
@@ -14,7 +14,7 @@
   "stacks": [
     "go"
   ],
-  "requires_kernel": 5,
+  "requires_kernel": 6,
   "provides": {
     "contracts": [
       "MailClient"

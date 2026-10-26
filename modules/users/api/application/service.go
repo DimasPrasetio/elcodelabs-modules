@@ -186,10 +186,14 @@ func (s *Service) recordUpdate(ctx context.Context, before, after domain.User, p
 		if after.IsActive {
 			action, summary = "user.activated", "Mengaktifkan "+after.Name
 		}
-		s.audit.Record(ctx, kernel.AuditEntry{Module: "users", Action: action, Target: target(after.ID), Summary: summary})
+		s.audit.Record(ctx, kernel.AuditEntry{Kind: kernel.AuditSecurity, Module: "users", Action: action, Target: target(after.ID), Summary: summary})
 	}
 	if len(changes) > 0 {
-		s.audit.Record(ctx, kernel.AuditEntry{Module: "users", Action: "user.updated", Target: target(after.ID), Summary: "Mengubah pengguna " + after.Name, Data: changes})
+		kind := kernel.AuditChange
+		if password || changes["email"] != nil {
+			kind = kernel.AuditSecurity // a new password or sign-in address is how an account changes hands
+		}
+		s.audit.Record(ctx, kernel.AuditEntry{Kind: kind, Module: "users", Action: "user.updated", Target: target(after.ID), Summary: "Mengubah pengguna " + after.Name, Data: changes})
 	}
 }
 

@@ -115,7 +115,7 @@ try {
       const id = args[0] ?? die("info <id>");
       const m = loadManifest(LIB, id);
       out(readFileSync(join(LIB, "modules", id, "README.md"), "utf8"));
-      out(`kind ${m.kind} · version ${m.version} · kernel ${m.requires_kernel} · builds on ${(m.ui ?? []).join(", ") || "—"}`);
+      out(`kind ${m.kind} · version ${m.version} · kernel ${m.requires_kernel} · builds on ${[...(m.ui ?? []), ...(m.go_kits ?? [])].join(", ") || "—"}`);
       for (const p of m.ports ?? []) out(`port ${p.name}${p.required ? "" : " (optional)"}: ${p.description} — ready-made: ${Object.keys(p.adapters ?? {}).join(", ") || "none"}`);
       for (const e of m.env ?? []) out(`env ${e.name}${e.required ? " (required)" : ""}: ${e.description}`);
       break;

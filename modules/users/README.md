@@ -44,6 +44,9 @@ provider), changing one's own email.
 
 ## Changes
 
+- **0.6.0** — needs kernel 6. Repositories run inside `d.Tx` (a caller's transaction is joined —
+  an HR module can create an employee and their account in one commit); deactivation,
+  activation, and a new password or email are recorded as `security` audit.
 - **0.5.0** — needs kernel 5. Own profile (`/api/v1/account/profile`, page `/account`, menu item
   through the `user-menu:items` slot); `UserClient.SetPassword` for an auth provider's change and
   reset flows; every change recorded in `d.Audit`.

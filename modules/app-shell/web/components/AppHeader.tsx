@@ -16,6 +16,8 @@ import { activeNavItem } from "@/modules/app-shell/lib/nav";
 export function AppHeader() {
   const items = useNavItems();
   const headerEnd = useSlot("header-end");
+  // The company/branch picker of an organization module (kernel 6 scope), when there is one.
+  const scope = useSlot("shell:scope");
   const { pathname } = useLocation();
   const active = activeNavItem(items, pathname);
   const crumbs = [active?.group, active?.label].filter(Boolean) as string[];
@@ -36,7 +38,12 @@ export function AppHeader() {
           ))}
         </BreadcrumbList>
       </Breadcrumb>
-      {headerEnd.length > 0 && <div className="ml-auto flex items-center gap-2">{headerEnd}</div>}
+      {(scope.length > 0 || headerEnd.length > 0) && (
+        <div className="ml-auto flex items-center gap-2">
+          {scope}
+          {headerEnd}
+        </div>
+      )}
     </header>
   );
 }

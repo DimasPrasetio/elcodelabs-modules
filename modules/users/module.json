@@ -1,6 +1,6 @@
 {
   "id": "users",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "kind": "fullstack",
   "title": "Users",
   "summary": "The people who can sign in: list, search, add, edit, deactivate; each person's own profile page; first-user bootstrap from env. Offers UserClient (incl. SetPassword for an auth provider); every change audited; guarded by users.read / users.manage.",
@@ -13,7 +13,7 @@
   "stacks": [
     "go"
   ],
-  "requires_kernel": 5,
+  "requires_kernel": 6,
   "provides": {
     "contracts": [
       "UserClient"

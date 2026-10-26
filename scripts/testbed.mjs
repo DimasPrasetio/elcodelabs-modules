@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Testbed — proves the library's modules install into a fresh project and work.
 //
-// Five scenarios, each in its own fresh project: a copy of the pinned kernel host (kernel/host,
+// Six scenarios, each in its own fresh project: a copy of the pinned kernel host (kernel/host,
 // scaffolded by a released monorepo-elcodelabs — see kernel/README.md), so nothing outside this
 // repository is needed:
 //   full        preset bingkai-navy + ui-core + app-shell + users + auth + rbac (ports ← users)
@@ -9,6 +9,7 @@
 //   auth-alone  ui-core + auth, UserStore ← an adapter the project wrote itself (no users module)
 //   users-alone ui-core + users, no auth provider (guarded routes must refuse)
 //   lifecycle   the module.mjs CLI: add, status, upgrade (clean merge + conflict), detach, promote
+//   kernel6     fixture modules: one d.Tx across modules, durable events, scope, a Go kit, schedules
 // Each: install → npm install → go mod tidy → sqlc generate → gofmt → go vet → go test →
 // build:web → build:api → run the binary and call the API.
 //
@@ -84,7 +85,7 @@ function build(dir) {
       return true;
     })()
     && run("go", ["vet", "./..."], api, "go vet ./...")
-    && run("go", ["test", "./..."], api, "go test ./... (module unit tests, ports faked)")
+    && run("go", ["test", "./..."], api, `go test ./... (module unit tests, ports faked${DB_DSN ? "; kernel MySQL tests" : ""})`, DB_DSN ? { KERNEL_TEST_DSN: DB_DSN } : undefined)
     && run("npm", ["run", "build:web"], dir, "build:web (tsc + vite)")
     && run("npm", ["run", "build:api"], dir, "build:api");
 }
@@ -480,6 +481,16 @@ async function full() {
       const bySettings = (await admin.call("GET", "/api/v1/audit?module=settings")).body.data ?? [];
       expect("audit-log: filtering by module", bySettings.length >= 2 && bySettings.every((e) => e.module === "settings"), bySettings.length);
       expect("audit-log: someone without audit-log.read → 403", (await b.call("GET", "/api/v1/audit")).status === 403);
+      const security = (await admin.call("GET", "/api/v1/audit?kind=security&limit=100")).body.data ?? [];
+      expect("audit-log: sign-ins and role changes are security records, filterable by kind (kernel 6)",
+        security.some((e) => e.action === "auth.signed_in") && security.some((e) => e.action === "role.member_added") && security.every((e) => e.kind === "security"), security.length);
+
+      // Kernel 6: mail goes through the kernel's task queue; without an organization module only
+      // company 1 exists, and asking for another is refused.
+      expect("mailer: delivered by kernel tasks", Number(mysqlQuery(db, "SELECT COUNT(*) FROM kernel_tasks WHERE kind = 'mailer.deliver' AND status = 'done'", name)) >= 1);
+      expect("scope: X-Scope for a company that does not exist here → 403", (await admin.call("GET", "/api/v1/users", undefined, { "X-Scope": "2" })).status === 403);
+      expect("settings, files, roles, and the audit trail are company 1's",
+        mysqlQuery(db, "SELECT COUNT(*) FROM settings WHERE company_id <> 1", name) === "0" && mysqlQuery(db, "SELECT COUNT(*) FROM audit_log WHERE company_id <> 1", name) === "0");
 
       // Two API processes on one database (a deploy's overlap): every email goes out exactly once.
       api2 = await startApi(dir, 18096, apiEnv);
@@ -625,6 +636,146 @@ async function usersAlone() {
 
 // The module.mjs CLI over a library's life: add → customize → the library moves on →
 // upgrade merges both; a clash conflicts; detach freezes; promote brings a module back.
+// Kernel 6 end to end, with fixture modules (testbed/fixtures/kernel6) in a throwaway copy of
+// the library: a Go kit, ports inside one d.Tx across modules, a durable event, company scope,
+// a calendar job run once across two containers, and the rules that keep modules honest.
+async function kernel6() {
+  log("\n=== kernel6: one transaction across modules, events, scope, a Go kit, calendar jobs ===");
+  const lib = mkdtempSync(join(LIB, ".testbed", "lib6-"));
+  const dir = scaffold("kernel6");
+  const g = (...a) => spawnSync("git", ["-C", lib, ...a], { encoding: "utf8" });
+  let api;
+  let api2;
+  try {
+    for (const p of ["modules", "themes", "scripts", "docs", "kernel"]) cpSync(join(LIB, p), join(lib, p), { recursive: true });
+    for (const f of [".gitignore", ".gitattributes"]) cpSync(join(LIB, f), join(lib, f));
+    for (const id of ["fixkit", "org6", "ledger", "orders"]) cpSync(join(LIB, "testbed/fixtures/kernel6", id), join(lib, "modules", id), { recursive: true });
+    g("init", "-q", "-b", "main");
+    g("add", "-A");
+    g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "library + kernel 6 fixtures");
+    const check = () => spawnSync(process.execPath, [join(lib, "scripts/catalog.mjs"), "--check"], { cwd: lib, encoding: "utf8" });
+    spawnSync(process.execPath, [join(lib, "scripts/catalog.mjs")], { cwd: lib, encoding: "utf8" });
+    let r = check();
+    expect("the fixtures (scoped modules, a Go kit, emits/listens) pass the architecture rules", r.status === 0, r.stderr);
+
+    // The rules refuse what would break kernel 6's guarantees.
+    const ordersQueries = join(lib, "modules/orders/api/infrastructure/queries/orders.sql");
+    const ordersService = join(lib, "modules/orders/api/application/service.go");
+    const ordersRepo = join(lib, "modules/orders/api/infrastructure/repository.go");
+    const ordersMigration = join(lib, "modules/orders/migrations", readdirSync(join(lib, "modules/orders/migrations")).find((f) => f.endsWith(".up.sql")));
+    const original = new Map([ordersQueries, ordersService, ordersRepo, ordersMigration].map((f) => [f, readFileSync(f, "utf8")]));
+    const queriesSrc = original.get(ordersQueries);
+    const serviceSrc = original.get(ordersService);
+    const repoSrc = original.get(ordersRepo);
+    for (const [label, file, src, rule] of [
+      ["a query on a scoped table without company_id", ordersQueries, queriesSrc + "\n-- name: AllOrders :many\nSELECT id FROM orders;\n", "scoped-queries"],
+      ["company_id named, but not in the WHERE", ordersQueries, queriesSrc + "\n-- name: OrderByID :one\nSELECT id, company_id FROM orders WHERE id = ?;\n", "scoped-queries"],
+      ["company_id only in a subquery", ordersQueries, queriesSrc + "\n-- name: Leak :many\nSELECT o.id FROM orders o WHERE o.id IN (SELECT id FROM orders WHERE company_id = ?);\n", "scoped-queries"],
+      ["an INSERT … SELECT copying from every company", ordersQueries, queriesSrc + "\n-- name: CopyOrder :exec\nINSERT INTO orders (company_id, sku, qty, created_at) SELECT ?, sku, qty, created_at FROM orders WHERE id = ?;\n", "scoped-queries"],
+      ["one SELECT of a UNION without company_id", ordersQueries, queriesSrc + "\n-- name: Both :many\nSELECT id FROM orders WHERE company_id = ? UNION ALL SELECT id FROM orders WHERE sku = ?;\n", "scoped-queries"],
+      ["company_id only in the ORDER BY", ordersQueries, queriesSrc + "\n-- name: Sorted :many\nSELECT id FROM orders WHERE id > ? ORDER BY company_id;\n", "scoped-queries"],
+      ["a column unique across companies", ordersMigration, original.get(ordersMigration) + "\nALTER TABLE orders ADD COLUMN code VARCHAR(20) NOT NULL UNIQUE;\n", "scoped-tables"],
+      ["a unique index across companies", ordersMigration, original.get(ordersMigration) + "\nCREATE UNIQUE INDEX orders_code ON orders (sku);\n", "scoped-tables"],
+      ["a business key unique across companies", ordersMigration, original.get(ordersMigration) + "\nALTER TABLE orders ADD UNIQUE KEY orders_sku (sku);\n", "scoped-tables"],
+      ["a query across every company without a System… name", ordersQueries, queriesSrc + "\n-- name: PurgeOrders :exec\n-- all companies: housekeeping\nDELETE FROM orders WHERE id = ?;\n", "scoped-queries"],
+      ["a module opening its own transaction", ordersService, serviceSrc + "\nfunc leak(db interface{ BeginTx() }) { db.BeginTx() }\n", "tx-aware"],
+      ["SQL on the pool, beside d.Tx", ordersService, serviceSrc + '\nfunc raw(d *kernel.Deps) { _, _ = d.DB.ExecContext(context.Background(), "DELETE FROM orders") }\n', "tx-aware"],
+      ["the kernel's DB under another name", ordersService, serviceSrc + '\nfunc raw(deps *kernel.Deps) { _ = deps.DB }\n', "tx-aware"],
+      ["SQL through Exec without a context", ordersRepo, repoSrc + '\nfunc wipe(db interface{ Exec(string, ...any) (any, error) }) { _, _ = db.Exec("DELETE FROM orders") }\n', "tx-aware"],
+      ["queries built on the pool through an aliased sqlc", ordersRepo, repoSrc.replace('"__GO_MODULE__/internal/modules/orders/infrastructure/sqlc"', 'q "__GO_MODULE__/internal/modules/orders/infrastructure/sqlc"') + "\nvar pool = q.New(nil)\n", "tx-aware"],
+      ["publishing an undeclared event", ordersService, serviceSrc.replace('"orders.order.placed"', '"orders.order.shipped"'), "events-declared"],
+      ["an event named by a variable, which no rule can check", ordersService, serviceSrc.replace('"orders.order.placed"', "eventName"), "events-declared"],
+      ["publishing through another name for d.Events", ordersService, serviceSrc + '\nfunc shout(ctx context.Context, d *kernel.Deps) error { bus := d.Events; return bus.Publish(ctx, "orders.order.shipped", 1, nil) }\n', "events-declared"],
+      ["publishing with a scope set inline", ordersService, serviceSrc + '\nfunc tell(ctx context.Context, d *kernel.Deps) error { return d.Events.Publish(kernel.WithScope(ctx, kernel.Scope{CompanyID: 2}), "orders.order.shipped", 1, nil) }\n', "events-declared"],
+      ["a conn taken before d.Tx.Do and used inside it", ordersRepo, repoSrc + '\nfunc (r *Repository) both(ctx context.Context) error {\n\tconn := r.tx.Conn(ctx)\n\treturn r.tx.Do(ctx, func(ctx context.Context) error {\n\t\t_, err := sqlc.New(conn).CountOrders(ctx, 1)\n\t\treturn err\n\t})\n}\n', "tx-aware"],
+      ["publishing through an injected publisher", ordersService, serviceSrc + '\nfunc tell(ctx context.Context, bus interface{ Publish(context.Context, string, int, any) error }) error { return bus.Publish(ctx, "orders.order.shipped", 1, nil) }\n', "events-declared"],
+      ["SQL on the pool behind a \"/*\" inside a string", ordersRepo, repoSrc + '\nvar accept = "image/*"\n\nfunc wipe(ctx context.Context, db interface{ ExecContext(context.Context, string, ...any) (any, error) }) { _, _ = db.ExecContext(ctx, "DELETE FROM orders") }\n\n/* end */\n', "tx-aware"],
+      ["an event version other than the declared one", ordersService, serviceSrc.replace('"orders.order.placed", 1,', '"orders.order.placed", 2,'), "events-declared"],
+    ]) {
+      writeFileSync(file, src);
+      r = check();
+      expect(`refused: ${label} (${rule})`, r.status === 1 && r.stderr.includes(rule), r.stderr);
+      writeFileSync(file, original.get(file));
+    }
+    // …and accept what is fine: SQL on a variable holding d.Tx.Conn(ctx); "d.DB" in a comment.
+    writeFileSync(ordersRepo, repoSrc + '\n// never d.DB\nfunc (r *Repository) touch(ctx context.Context) error {\n\tconn := r.tx.Conn(ctx)\n\t_ = sqlc.New(conn)\n\t_, err := conn.ExecContext(ctx, "SELECT 1 -- not d.DB")\n\treturn err\n}\n');
+    writeFileSync(ordersQueries, queriesSrc + "\n-- name: OrderOf :one\nSELECT id FROM orders WHERE (company_id = ? AND id = ?);\n");
+    writeFileSync(ordersMigration, original.get(ordersMigration) + "\nALTER TABLE orders ADD UNIQUE KEY orders_sku (company_id, sku(20));\n");
+    r = check();
+    expect("accepted: SQL and sqlc.New on a variable holding d.Tx.Conn(ctx), d.DB in a comment or string, a parenthesized company filter, a per-company key with a prefix length", r.status === 0, r.stderr);
+    writeFileSync(ordersRepo, repoSrc);
+    writeFileSync(ordersQueries, queriesSrc);
+    writeFileSync(ordersMigration, original.get(ordersMigration));
+    expect("restored fixtures pass again", check().status === 0);
+
+    installModule(lib, dir, "org6");
+    installModule(lib, dir, "ledger");
+    installModule(lib, dir, "orders", { ports: { Stock: "ledger" } });
+    const reg = readFileSync(join(dir, "apps/api/internal/modules/registry.go"), "utf8");
+    expect("the Go kit came along with the module that declares it", existsSync(join(dir, "apps/api/internal/shared/fixkit/fixkit.go")) && JSON.parse(readFileSync(join(dir, "modules.lock.json"), "utf8")).modules.fixkit);
+    expect("the event subscription is wired in the composition root from \"listens\"",
+      reg.includes('d.Events.On("orders.order.placed", "ledger.note-order", ledgerModule.OnOrderPlaced)'), reg);
+    if (!build(dir)) return;
+    if (!DB_DSN) {
+      skip("kernel6: API checks against MySQL — set TESTBED_DB_DSN");
+      return;
+    }
+    const db = parseDsn(DB_DSN);
+    const name = `elco_testbed_k6_${Date.now()}`;
+    try {
+      const dsn = freshDatabase(dir, db, name);
+      // An hour ago in the app's time zone: both containers find the tick missed and catch it up.
+      const wib = new Date(Date.now() + 7 * 3600 * 1000 - 3600 * 1000);
+      const at = `${String(wib.getUTCHours()).padStart(2, "0")}:${String(wib.getUTCMinutes()).padStart(2, "0")}`;
+      const env = { DB_DSN: dsn, APP_TIMEZONE: "Asia/Jakarta", LEDGER_DAILY_AT: at };
+      // The job ran in an earlier deploy (a job never catches up a tick from before it existed).
+      mysqlQuery(db, "INSERT INTO kernel_schedules (name, spec, created_at, updated_at) VALUES ('ledger.daily-note', '', UTC_TIMESTAMP(6) - INTERVAL 2 DAY, UTC_TIMESTAMP(6))", name);
+      api = await startApi(dir, 18097, env);
+      api2 = await startApi(dir, 18098, env);
+      const as = (user, scope) => ({ "X-Test-User": String(user), ...(scope ? { "X-Scope": scope } : {}) });
+      const c = client(18097);
+      const q = (sql) => mysqlQuery(db, sql, name);
+
+      expect("stock added in company 1", (await c.call("POST", "/api/v1/ledger/stock", { sku: "A", qty: 5 }, as(1))).status === 201);
+      r = await c.call("POST", "/api/v1/orders", { sku: "A", qty: 3 }, as(1));
+      expect("an order takes its stock through the port, in one transaction", r.status === 201 && q("SELECT qty FROM ledger_stock WHERE company_id = 1 AND sku = 'A'") === "2", r.body);
+      r = await c.call("POST", "/api/v1/orders", { sku: "A", qty: 9 }, as(1));
+      expect("not enough stock: the order is refused and nothing is left behind (atomic across modules)",
+        r.status === 409 && q("SELECT COUNT(*) FROM orders") === "1" && q("SELECT qty FROM ledger_stock WHERE company_id = 1 AND sku = 'A'") === "2", r.body);
+      expect("the refused order published nothing", q("SELECT COUNT(*) FROM kernel_tasks WHERE kind = 'event:ledger.note-order'") === "1");
+      const note = await waitFor(() => q("SELECT body FROM ledger_notes WHERE body LIKE 'placed:%'") || undefined, 15000);
+      expect("the event reached its subscriber in another module, through a task", note === "placed:1:ORD-000001", note);
+      expect("…exactly once, across two running containers", q("SELECT COUNT(*) FROM ledger_notes WHERE body LIKE 'placed:%'") === "1" &&
+        q("SELECT COUNT(*) FROM kernel_tasks WHERE kind = 'event:ledger.note-order' AND status = 'done'") === "1");
+
+      expect("company 2: its own stock", (await c.call("POST", "/api/v1/ledger/stock", { sku: "A", qty: 7 }, as(1, "2"))).status === 201);
+      expect("company 2 sees none of company 1's orders", (await c.call("GET", "/api/v1/orders/count", undefined, as(1, "2"))).body?.data?.count === 0);
+      expect("company 1 sees its order", (await c.call("GET", "/api/v1/orders/count", undefined, as(1))).body?.data?.count === 1);
+      expect("company 2's stock is apart from company 1's", q("SELECT qty FROM ledger_stock WHERE company_id = 2 AND sku = 'A'") === "7");
+      expect("a company the user is not placed in → 403", (await c.call("GET", "/api/v1/orders/count", undefined, as(2, "2"))).status === 403);
+      expect("a branch the user is placed in is accepted", (await c.call("GET", "/api/v1/orders/count", undefined, as(2, "1:5"))).status === 200);
+
+      const daily = await waitFor(() => (q("SELECT COUNT(*) FROM ledger_notes WHERE body = 'daily'") !== "0" ? "ok" : undefined), 15000);
+      await new Promise((res) => setTimeout(res, 1500));
+      expect("a missed daily tick is caught up — once, though two containers started",
+        daily === "ok" && q("SELECT COUNT(*) FROM ledger_notes WHERE body = 'daily'") === "1" && q("SELECT COUNT(*) FROM kernel_schedule_runs WHERE name = 'ledger.daily-note' AND ok = TRUE") === "1");
+    } finally {
+      stopApi(api);
+      stopApi(api2);
+      try { mysql(db, `DROP DATABASE IF EXISTS ${name};`); } catch {}
+    }
+  } catch (err) {
+    fail(`kernel6: ${err.message}`);
+  } finally {
+    stopApi(api);
+    stopApi(api2);
+    if (!KEEP) {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(lib, { recursive: true, force: true });
+    }
+  }
+}
+
 // Runs against a throwaway git copy of the library, so the real repo is never committed to.
 async function lifecycle() {
   log("\n=== lifecycle: module.mjs add / status / upgrade / detach / promote ===");
@@ -853,7 +1004,7 @@ for (const tool of ["go", "sqlc", "gofmt"]) {
   }
 }
 
-const scenarios = { full, "no-rbac": noRbac, "auth-alone": authAlone, "users-alone": usersAlone, lifecycle };
+const scenarios = { full, "no-rbac": noRbac, "auth-alone": authAlone, "users-alone": usersAlone, lifecycle, kernel6 };
 for (const [name, fn] of Object.entries(scenarios)) {
   if (!ONLY || ONLY === name) await fn();
 }

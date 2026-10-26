@@ -31,9 +31,9 @@ func New(d *kernel.Deps, users ports.UserDirectory) (*Module, error) {
 	if err != nil || days < 30 {
 		return nil, fmt.Errorf("audit-log: AUDIT_RETENTION_DAYS must be a number of days, at least 30 (got %q)", config.Get("AUDIT_RETENTION_DAYS", ""))
 	}
-	svc := application.NewService(infrastructure.NewRepository(d.DB), users, time.Duration(days)*24*time.Hour)
+	svc := application.NewService(infrastructure.NewRepository(d.Tx), users, time.Duration(days)*24*time.Hour)
 	d.Jobs.Every("audit-log.prune", 24*time.Hour, svc.Prune)
-	return &Module{svc: svc, handler: presentation.NewHandler(svc, d.Authz)}, nil
+	return &Module{svc: svc, handler: presentation.NewHandler(svc, d.Authz, d.Clock)}, nil
 }
 
 // Routes mounts /api/v1/audit.

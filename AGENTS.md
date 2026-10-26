@@ -63,6 +63,16 @@ message. The pre-commit hook and CI run it with `--since`, which adds the histor
 | `kernel-pinned` | A module's `requires_kernel` is at most the pinned kernel: a module builds only on a kernel it can be tested against. | ✓ |
 | `kernel-alone` | A commit that changes `kernel/` changes nothing else, so a kernel update is reviewed and reverted on its own. | ✓ `--since` |
 | `adapter-requires` | An adapter's `requires` (oldest provider version it compiles against) is a released version of that provider. | ✓ |
+| `declared-go-kits` | A module (or kit) that imports a Go kit (`internal/shared/<kit>`) lists it in `go_kits`. | ✓ |
+| `gokit-pure` | A Go kit imports only the standard library, its `go_dependencies`, and other Go kits — no kernel, config, module, or environment; no tables, no wiring; never named like a kernel `shared/` package. | ✓ |
+| `tx-aware` | A module on kernel 6 builds its queries per call on `d.Tx.Conn(ctx)`, never opens a transaction itself, never uses the kernel's `DB`, and runs no SQL except through sqlc or on `d.Tx.Conn(ctx)` (or a variable holding it) — so a caller's `d.Tx` spans it. | ✓ |
+| `scoped-tables` / `scoped-queries` | A `"scoped": true` module has `company_id` in every table and in every query — in the statement's own `WHERE` (not only a subquery's), in an INSERT's columns and in what an INSERT … SELECT copies. Its primary and unique keys include `company_id` (a surrogate `id` aside), so an upsert never reaches another company's row. A system query spanning every company says `-- all companies` and is named `System…`. | ✓ |
+| `kernel-tables` | Tables named `kernel_*` belong to the kernel; no module owns them (and `own-tables-only` keeps them out of its queries). | ✓ |
+| `events-declared` | A module publishes only events it declares in `emits` (named `<id>.<thing>.<past-verb>`, versioned, and written at every `Publish(ctx, name, version, …)` — through whatever holds `d.Events` — as a string literal with the declared version); it subscribes only through `listens` (wired in the composition root), to events some module emits. | ✓ |
+
+The Go and SQL rules read the code as written — plainly (`d.Tx.Conn(ctx)`, `d.Events.Publish(ctx,
+"…", 1, …)`, `WHERE company_id = ? AND …`). Code bent to slip past them (reflection, an `OR`
+beside the company filter, a helper that hands out the pool) is caught in review, not here.
 
 ## Adding or changing a module
 

@@ -33,6 +33,8 @@ a quiet header on `--background` and rows padded by `--row-py`.
 
 ## Changes
 
+- **0.4.0** — needs kernel 6. `useResource` loads again on the `scope:changed` app event:
+  switching company or branch never leaves another company's data on screen.
 - **0.3.0** — `shared/hooks/use-resource.ts`: `useResource(load, deps)` loads what a page shows,
   aborts the previous request when its inputs change, and drops late answers, so an old search
   never replaces a new one. Use it for every list and detail page.
