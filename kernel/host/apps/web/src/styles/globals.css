@@ -1,0 +1,2 @@
+/* App-wide styles beyond the theme. Tailwind and every token come from theme.css. */
+@import "../theme/theme.css";

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+tmp/
+.env
+*.local
+.DS_Store
+coverage/
+# Go
+/dist/api
+apps/api/tmp/
+apps/api/data/
+# Prisma
+apps/api/prisma/*.db

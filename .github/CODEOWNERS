@@ -1,0 +1,13 @@
+# Who must approve a change (with branch protection "Require review from Code Owners" on main).
+# Modules (modules/, themes/) are open to every module developer; what decides whether a module
+# fits — the pinned kernel, the rules that check it, CI, and the contract documents — is not.
+/kernel/                @DimasPrasetio
+/scripts/               @DimasPrasetio
+/.github/               @DimasPrasetio
+/.githooks/             @DimasPrasetio
+/docs/                  @DimasPrasetio
+/AGENTS.md              @DimasPrasetio
+/CLAUDE.md              @DimasPrasetio
+/.gitattributes         @DimasPrasetio
+/.gitignore             @DimasPrasetio
+/package.json           @DimasPrasetio

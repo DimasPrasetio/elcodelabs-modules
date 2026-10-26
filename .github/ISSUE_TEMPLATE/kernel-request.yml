@@ -1,0 +1,37 @@
+name: Kernel request
+description: A module needs something the pinned kernel does not offer.
+title: "Kernel request: "
+labels: ["kernel-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The kernel changes only in monorepo-elcodelabs, and only for what modules cannot do for
+        themselves. Before asking, check that the need cannot be met inside the module's folder
+        or behind a port (AGENTS.md › When a module needs more from the kernel).
+  - type: textarea
+    id: need
+    attributes:
+      label: What is needed
+      description: The capability, in a sentence or two — not the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: why-not-module
+    attributes:
+      label: Why it cannot live in a module
+      description: Which of these it touches — the process lifecycle (cmd/server), deploy or infrastructure (Dockerfile, compose, deploy.sh, server), the request context, the frontend shell contract — and why a port does not do.
+    validations:
+      required: true
+  - type: textarea
+    id: modules
+    attributes:
+      label: Modules that would use it
+      description: Existing or planned. One module alone is a reason to build it in that module.
+    validations:
+      required: true
+  - type: textarea
+    id: meanwhile
+    attributes:
+      label: Until then
+      description: How the module works on the current kernel meanwhile (a port, a narrower feature, or waiting).

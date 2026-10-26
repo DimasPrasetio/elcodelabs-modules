@@ -1,0 +1,2 @@
+# The pinned kernel is hashed byte for byte: check it out with LF line endings everywhere.
+/kernel/** text=auto eol=lf

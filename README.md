@@ -68,6 +68,11 @@ Read [AGENTS.md](AGENTS.md) first — the architecture is locked, and it lists e
 the check that enforces it. After cloning, enable the pre-commit hook once:
 `git config core.hooksPath .githooks`.
 
+This repository is self-contained: the kernel modules build on is pinned in
+[`kernel/`](kernel/README.md) (a host project from a released monorepo-elcodelabs, its kernel
+references, and a lock of every file's hash). You do not need the skill to develop, try, or
+test a module.
+
 ## Layout
 
 ```txt
@@ -75,7 +80,10 @@ modules/<id>/        module.json, README.md, and the folders it installs (api/, 
                      migrations/, adapters/)
 themes/<id>/         preset.json, theme.css, fonts.ts, DESIGN.md
 scripts/catalog.mjs  validates manifests and the architecture rules (scripts/lib/rules.mjs) → CATALOG.md, catalog.json
-scripts/testbed.mjs  installs modules into freshly scaffolded projects and tests them end to end
+kernel/              the pinned kernel: host/ (a scaffolded project), reference/, kernel.lock.json — read-only
+scripts/testbed.mjs  installs modules into fresh copies of the pinned host and tests them end to end
+scripts/sandbox.mjs  a project from the pinned host with the modules you name, to develop and try them
+scripts/kernel-sync.mjs  the maintainer's tool to pin a released kernel (kernel/ only, its own commit)
 scripts/module.mjs   the CLI projects use (add, status, upgrade, detach, promote, …)
 scripts/lib/         install/upgrade core, library reader (working tree or a commit), promote
 testbed/fixtures/    project-side code the testbed needs (e.g. a project-owned UserStore)
@@ -85,8 +93,9 @@ testbed/fixtures/    project-side code the testbed needs (e.g. a project-owned U
 
 ```bash
 npm run catalog                 # after changing any module.json / preset.json
-npm run check                   # manifests valid + catalog current (CI runs this)
-TESTBED_DB_DSN='root:@tcp(localhost:3306)/' npm run testbed -- --skill ~/path/to/monorepo-elcodelabs
+npm run check                   # manifests valid + catalog current + kernel intact (CI runs this)
+npm run sandbox -- <id>...      # .sandbox/<ids>: the pinned host + your modules, ready to run
+TESTBED_DB_DSN='root:@tcp(localhost:3306)/' npm run testbed
 ```
 
 The testbed needs Go, `sqlc`, `gofmt`, Node, and — for the API checks of `full` and `no-rbac` —
@@ -100,7 +109,7 @@ Scenarios:
 | `no-rbac` | users + auth without rbac: the kernel's default — any signed-in user passes `users.manage` |
 | `auth-alone` | auth runs on a UserStore the project wrote itself — no users module, no mailer: password features report themselves off and the optional ports are `nil` |
 | `users-alone` | users runs without any auth provider; its guarded routes refuse (401) |
-| `lifecycle` | the CLI on a throwaway git copy of the library: add (and a refused add), status, upgrade merging the project's and the library's changes (then the project still builds), a conflicting upgrade, detach, wiring a port later (the consumer moves after its provider in the registry), remove, release-tag fallback, promote (refused when the module imports another or breaks an architecture rule) |
+| `lifecycle` | the CLI on a throwaway git copy of the library: add (and a refused add), status, upgrade merging the project's and the library's changes (then the project still builds), a conflicting upgrade, detach, wiring a port later (the consumer moves after its provider in the registry), remove, release-tag fallback, promote (refused when the module imports another or breaks an architecture rule), and the pinned kernel: an edit to it, a module needing a newer kernel, and a kernel update mixed with a module change are refused |
 
 A new module is done when its README and `module.json` are complete, the catalog check passes,
 and a testbed scenario covers it.
@@ -110,4 +119,10 @@ and a testbed scenario covers it.
 Each module has its own version, tagged `<id>/v<version>` (e.g. `auth/v0.4.0`) by the post-commit
 hook — push with `git push --follow-tags`. A project records the commit it installed from and
 falls back to the tag when that commit is gone. A module states the minimum kernel version it
-needs (`requires_kernel`; the current kernel is 4).
+needs (`requires_kernel`), at most the pinned kernel in `kernel/kernel.lock.json`.
+
+The kernel itself is versioned in monorepo-elcodelabs and released as tags
+`monorepo-elcodelabs/kernel/v<N>` there. The maintainer pins one here with
+`npm run kernel:sync -- --skill <monorepo-elcodelabs folder>` after the testbed passes on it
+(`npm run testbed -- --skill <folder>` tries an unreleased kernel first). A module developer
+who needs more from the kernel opens a "Kernel request" issue — see AGENTS.md.

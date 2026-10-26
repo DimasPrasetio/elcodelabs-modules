@@ -1,0 +1,4 @@
+version: "2"
+sql:
+  # elco:sqlc:begin
+  # elco:sqlc:end

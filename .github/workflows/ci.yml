@@ -41,13 +41,8 @@ jobs:
     env:
       TESTBED_DB_DSN: "root:@tcp(127.0.0.1:3306)/"
     steps:
+      # Projects come from the pinned kernel host (kernel/): nothing outside this repository.
       - uses: actions/checkout@v4
-      # The scaffolder the modules install into. Set the repository variable SKILL_REPO to the
-      # GitHub repo holding monorepo-elcodelabs (owner/name) and SKILL_PATH to its folder in it.
-      - uses: actions/checkout@v4
-        with:
-          repository: ${{ vars.SKILL_REPO }}
-          path: .skill
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -58,4 +53,4 @@ jobs:
         run: go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 && echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: mysql client
         run: sudo apt-get update && sudo apt-get install -y mysql-client
-      - run: node scripts/testbed.mjs --skill ".skill/${{ vars.SKILL_PATH }}"
+      - run: node scripts/testbed.mjs

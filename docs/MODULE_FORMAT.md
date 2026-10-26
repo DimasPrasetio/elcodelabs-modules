@@ -13,7 +13,8 @@ The architecture rules — what a module may import, how its layers depend on ea
 tables it may touch, how its UI is built, and what a change may not do to a released module —
 are listed in [AGENTS.md](../AGENTS.md), each with the check that enforces it
 (`scripts/lib/rules.mjs`). They come from the `monorepo-elcodelabs` skill, which owns the
-architecture.
+architecture; the kernel contract a module builds on is pinned, read-only, in
+[`kernel/`](../kernel/README.md) (`kernel/reference/` and the host project's kernel code).
 
 ## `module.json`
 
@@ -27,7 +28,7 @@ architecture.
   "when_to_use": ["…"],               // what makes it the right pick
   "when_not_to_use": ["…"],           // when to build something else instead
   "stacks": ["go"],                   // backend stacks it ships for (empty for web/ui)
-  "requires_kernel": 3,               // minimum kernel.Version it needs
+  "requires_kernel": 3,               // minimum kernel.Version it needs — at most the pinned one
 
   "provides": {
     "contracts": ["UserClient"],      // interfaces in api/contracts other modules can be wired to

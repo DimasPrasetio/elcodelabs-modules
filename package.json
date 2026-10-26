@@ -6,6 +6,8 @@
   "scripts": {
     "catalog": "node scripts/catalog.mjs",
     "check": "node scripts/catalog.mjs --check --since HEAD",
-    "testbed": "node scripts/testbed.mjs"
+    "testbed": "node scripts/testbed.mjs",
+    "sandbox": "node scripts/sandbox.mjs",
+    "kernel:sync": "node scripts/kernel-sync.mjs"
   }
 }

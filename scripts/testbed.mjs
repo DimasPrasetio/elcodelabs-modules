@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Testbed — proves the library's modules install into a freshly scaffolded project and work.
+// Testbed — proves the library's modules install into a fresh project and work.
 //
-// Five scenarios, each in its own fresh project scaffolded with monorepo-elcodelabs (Go):
+// Five scenarios, each in its own fresh project: a copy of the pinned kernel host (kernel/host,
+// scaffolded by a released monorepo-elcodelabs — see kernel/README.md), so nothing outside this
+// repository is needed:
 //   full        preset bingkai-navy + ui-core + app-shell + users + auth + rbac (ports ← users)
 //   no-rbac     users + auth without rbac: the kernel's default "signed in = allowed"
 //   auth-alone  ui-core + auth, UserStore ← an adapter the project wrote itself (no users module)
@@ -15,16 +17,19 @@
 // migrated with npm run migrate:up (golang-migrate, installed into .testbed/bin), and dropped.
 // Without it those checks are skipped — and reported.
 //
-// Usage: node scripts/testbed.mjs [--skill <path to monorepo-elcodelabs>] [--only <scenario>] [--keep]
-//   --skill defaults to $SKILL_DIR, then ~/.claude/skills/monorepo-elcodelabs.
+// Usage: node scripts/testbed.mjs [--only <scenario>] [--keep] [--skill <path>]
+//   --skill (or $SKILL_DIR) scaffolds from a monorepo-elcodelabs working copy instead of the
+//   pinned host — for the skill's maintainer, to try an unreleased kernel against the library
+//   before releasing it.
 
 import { spawn, spawnSync } from "node:child_process";
 import net from "node:net";
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyPreset, installModule as installOne, missingKits } from "./lib/install.mjs";
+import { HOST_SCAFFOLD, materializeHost, readKernelLock } from "./lib/kernel.mjs";
+import { createHash } from "node:crypto";
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
@@ -32,7 +37,7 @@ const flag = (name) => {
   const i = argv.indexOf(name);
   return i === -1 ? undefined : argv[i + 1];
 };
-const SKILL = flag("--skill") ?? process.env.SKILL_DIR ?? join(homedir(), ".claude/skills/monorepo-elcodelabs");
+const SKILL = flag("--skill") ?? process.env.SKILL_DIR;
 const ONLY = flag("--only");
 const KEEP = argv.includes("--keep");
 const DB_DSN = process.env.TESTBED_DB_DSN;
@@ -57,8 +62,12 @@ function run(cmd, args, cwd, label = `${cmd} ${args.join(" ")}`, env) {
 function scaffold(name) {
   mkdirSync(join(LIB, ".testbed"), { recursive: true });
   const dir = mkdtempSync(join(LIB, ".testbed", `${name}-`));
-  const r = spawnSync(process.execPath, [join(SKILL, "scripts/scaffold.mjs"), "--name", "Testbed App", "--backend", "go", "--dir", dir, "--force"], { encoding: "utf8" });
-  if (r.status !== 0) throw new Error(`scaffold failed: ${r.stderr}`);
+  if (SKILL) {
+    const r = spawnSync(process.execPath, [join(SKILL, "scripts/scaffold.mjs"), "--name", HOST_SCAFFOLD.name, "--backend", HOST_SCAFFOLD.backend, "--dir", dir, "--force"], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`scaffold failed: ${r.stderr}`);
+  } else {
+    materializeHost(LIB, dir);
+  }
   copyFileSync(join(dir, ".env.example"), join(dir, ".env"));
   return dir;
 }
@@ -630,8 +639,8 @@ async function lifecycle() {
   };
   const bump = (version) => edit(join(lib, "modules/users/module.json"), /"version": "[^"]+"/.exec(readFileSync(join(lib, "modules/users/module.json"), "utf8"))[0], `"version": "${version}"`);
   try {
-    for (const p of ["modules", "themes", "scripts", "docs"]) cpSync(join(LIB, p), join(lib, p), { recursive: true });
-    cpSync(join(LIB, ".gitignore"), join(lib, ".gitignore"));
+    for (const p of ["modules", "themes", "scripts", "docs", "kernel"]) cpSync(join(LIB, p), join(lib, p), { recursive: true });
+    for (const f of [".gitignore", ".gitattributes"]) cpSync(join(LIB, f), join(lib, f));
     writeFileSync(join(lib, "modules/ui-core/shared/.DS_Store"), "finder junk"); // ignored by git
     g("init", "-q", "-b", "main");
     g("add", "-A");
@@ -780,6 +789,39 @@ async function lifecycle() {
     r = cli("promote", "banner", "--lib", lib);
     expect("promote refuses a module that breaks an architecture rule, leaving the library untouched",
       r.status === 1 && r.stderr.includes("semantic-colors") && !existsSync(join(lib, "modules/banner")), r.stderr);
+
+    // The pinned kernel: read-only from the library's side.
+    g("add", "-A");
+    g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "promoted");
+    const check = () => spawnSync(process.execPath, [join(lib, "scripts/catalog.mjs"), "--check", "--since", "HEAD"], { cwd: lib, encoding: "utf8" });
+    const kernelGo = join(lib, "kernel/host/apps/api/internal/kernel/kernel.go");
+    const kernelSrc = readFileSync(kernelGo, "utf8");
+    writeFileSync(kernelGo, kernelSrc + "\n// a module developer's edit\n");
+    r = check();
+    expect("an edit to the pinned kernel is refused", r.status === 1 && r.stderr.includes("pinned-kernel") && r.stderr.includes("host/apps/api/internal/kernel/kernel.go"), r.stderr);
+    const hostCopy = mkdtempSync(join(LIB, ".testbed", "host-"));
+    let refused = false;
+    try { materializeHost(lib, hostCopy); } catch { refused = true; }
+    rmSync(hostCopy, { recursive: true, force: true });
+    expect("a tampered kernel is never copied into a project", refused);
+    writeFileSync(kernelGo, kernelSrc);
+    edit(join(lib, "modules/users/module.json"), /"requires_kernel": \d+/.exec(readFileSync(join(lib, "modules/users/module.json"), "utf8"))[0], `"requires_kernel": ${readKernelLock(lib).kernel + 1}`);
+    r = check();
+    expect("a module asking for a kernel newer than the pinned one is refused", r.status === 1 && r.stderr.includes("kernel-pinned"), r.stderr);
+    g("checkout", "--", "modules/users/module.json");
+    // A kernel sync and a module change in one commit: the lock is consistent, the mix is not.
+    const kernelLockFile = join(lib, "kernel/kernel.lock.json");
+    const kernelLock = JSON.parse(readFileSync(kernelLockFile, "utf8"));
+    const readme = readFileSync(join(lib, "kernel/README.md"), "utf8") + "\nsynced again\n";
+    writeFileSync(join(lib, "kernel/README.md"), readme);
+    kernelLock.files["README.md"] = createHash("sha256").update(readme).digest("hex");
+    writeFileSync(kernelLockFile, JSON.stringify(kernelLock, null, 2) + "\n");
+    edit(join(lib, "modules/users/README.md"), "#", "# ");
+    r = check();
+    expect("a kernel update mixed with a module change is refused (kernel-alone)", r.status === 1 && r.stderr.includes("kernel-alone") && !r.stderr.includes("pinned-kernel"), r.stderr);
+    g("checkout", "--", "modules/users/README.md");
+    r = check();
+    expect("the same kernel update on its own passes", r.status === 0, r.stderr);
   } catch (err) {
     fail(`lifecycle: ${err.message}`);
   } finally {
@@ -790,9 +832,19 @@ async function lifecycle() {
   }
 }
 
-if (!existsSync(join(SKILL, "scripts/scaffold.mjs"))) {
-  log(`monorepo-elcodelabs not found at ${SKILL} — pass --skill <path> or set SKILL_DIR.`);
-  process.exit(1);
+if (SKILL) {
+  if (!existsSync(join(SKILL, "scripts/scaffold.mjs"))) {
+    log(`monorepo-elcodelabs not found at ${SKILL}.`);
+    process.exit(1);
+  }
+  log(`Projects scaffolded from ${SKILL} (not the pinned kernel).`);
+} else {
+  const lock = readKernelLock(LIB);
+  if (!lock) {
+    log("No pinned kernel (kernel/kernel.lock.json) — see kernel/README.md.");
+    process.exit(1);
+  }
+  log(`Projects copied from the pinned kernel ${lock.kernel} host (${lock.source.tag ?? lock.source.commit.slice(0, 7)}).`);
 }
 for (const tool of ["go", "sqlc", "gofmt"]) {
   if (spawnSync("which", [tool]).status !== 0) {

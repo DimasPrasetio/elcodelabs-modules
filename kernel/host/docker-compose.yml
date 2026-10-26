@@ -1,0 +1,14 @@
+# LOCAL ONLY — builds from source for a quick check on your own machine.
+# Production never builds: see infra/elcodelabs/docker-compose.prod.yml (image-only).
+services:
+  app:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+    ports:
+      - "8080:8080"
+    # Copy .env.example to .env before running compose.
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

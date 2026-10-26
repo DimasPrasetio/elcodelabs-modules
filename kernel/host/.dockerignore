@@ -1,0 +1,16 @@
+node_modules
+**/node_modules
+dist
+build
+tmp
+.git
+.github
+.claude
+knowledge
+analysis
+infra/elcodelabs
+.env
+.env.*
+*.md
+# Shipped inside the image so deploy.sh can check the server's .env before migrating.
+!infra/elcodelabs/.env.production.example

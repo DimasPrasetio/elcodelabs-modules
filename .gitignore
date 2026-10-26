@@ -2,3 +2,4 @@ node_modules/
 .testbed/
 .DS_Store
 *.log
+.sandbox/

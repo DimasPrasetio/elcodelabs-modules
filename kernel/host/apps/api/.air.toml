@@ -1,0 +1,17 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+# Always ".exe", on every OS. Windows only runs files with an executable extension: a plain
+# "tmp/main" builds fine but air cannot start it, so dev:api stops. macOS/Linux run
+# "main.exe" just the same, so one committed config works for the whole team.
+cmd = "go build -o ./tmp/main.exe ./cmd/server"
+bin = "./tmp/main.exe"
+include_ext = ["go", "tpl", "tmpl", "html"]
+exclude_dir = ["tmp", "vendor", "node_modules", "migrations"]
+
+[log]
+time = true
+
+[misc]
+clean_on_exit = true

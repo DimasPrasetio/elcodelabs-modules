@@ -1,0 +1,20 @@
+{
+  "name": "testbed-app",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Testbed App — monorepo (Dimas standard)",
+  "workspaces": [
+    "apps/web",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w apps/web",
+    "dev:api": "cd apps/api && air",
+    "build:web": "npm run build -w apps/web",
+    "build:api": "cd apps/api && go build -o ../../dist/api ./cmd/server",
+    "migrate:up": "node scripts/migrate.mjs up",
+    "migrate:down": "node scripts/migrate.mjs down 1",
+    "migrate:create": "cd apps/api && migrate create -ext sql -dir migrations",
+    "sqlc:generate": "node scripts/sqlc.mjs"
+  }
+}

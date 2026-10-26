@@ -1,4 +1,5 @@
 {
+  "kernel": 5,
   "modules": [
     {
       "id": "app-shell",

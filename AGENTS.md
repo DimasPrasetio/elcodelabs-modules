@@ -5,20 +5,27 @@ adding or changing a module. The architecture here is **locked**: it is the arch
 the `monorepo-elcodelabs` skill, and every module must install into a project that skill
 scaffolded and fit there as if it had been written in that project.
 
+**This repository is all you need.** The kernel modules build on is pinned in
+[`kernel/`](kernel/README.md): a project scaffolded by a released skill (`kernel/host/`), the
+skill's references for the kernel contract (`kernel/reference/`), and a lock with every file's
+hash. The testbed and the sandbox start from it; nothing reads the skill (why, and on what
+grounds: [docs/decisions/0001-pinned-kernel.md](docs/decisions/0001-pinned-kernel.md)).
+
 ## Where the architecture is defined
 
-Not here. The skill owns it, and this library follows it:
+The skill owns it; its references come pinned with the kernel, read-only:
 
-| Topic | Source of truth (in the skill's `references/`) |
+| Topic | Read |
 |---|---|
-| Module boundaries, ports, contracts, composition root | `backend-modular-monolith.md` |
-| Go kernel (`d.Auth`, `d.Authz`, `d.Config`, versions), module contract, registry | `backend-go.md` |
-| Frontend structure, `FrontendModule`, shadcn/ui, tokens, UI kits | `frontend.md` |
-| How projects use this library | `module-library.md` |
+| Module boundaries, ports, contracts, composition root | `kernel/reference/backend-modular-monolith.md` |
+| Go kernel (`d.Auth`, `d.Authz`, `d.Jobs`, `d.Audit`, `d.Config`, versions), module contract, registry | `kernel/reference/backend-go.md`, and the kernel's own code with its doc comments: `kernel/host/apps/api/internal/kernel/`, `…/internal/shared/` |
+| Frontend structure, `FrontendModule`, slots, shadcn/ui, tokens | `kernel/reference/frontend.md`, `kernel/host/apps/web/src/shared/` |
+| `/api/v1` conventions | `kernel/reference/api-standard.md` |
+| The project a module lands in | `kernel/host/` (its `CLAUDE.md`, `.claude/rules/`, and `knowledge/` are what that project's developers read) |
 
-If a module needs something the architecture does not allow, the answer is a change to the
-skill first (with a kernel version bump when the module contract changes), never a module that
-works around it.
+If a module needs something the kernel does not offer, see
+[When a module needs more from the kernel](#when-a-module-needs-more-from-the-kernel) — never a
+module that works around it, and never an edit under `kernel/`.
 
 ## Rules
 
@@ -52,6 +59,10 @@ message. The pre-commit hook and CI run it with `--since`, which adds the histor
 | `forward-only-migrations` | A released migration is never edited or removed — projects have already applied it. Add a new one. | ✓ `--since` |
 | `released-is-forever` | A released module or preset is never deleted — projects upgrade from it. Deprecate it in its README instead. | ✓ `--since` |
 | `release-tags` | Every released version has the tag `<id>/v<version>` (the post-commit hook creates it; push with `git push --follow-tags`). A project whose recorded commit is gone upgrades from the tag. | ✓ CI on push |
+| `pinned-kernel` | `kernel/` is exactly what `kernel/kernel.lock.json` records — no file edited, added, or removed. It changes only through `scripts/kernel-sync.mjs`. | ✓ |
+| `kernel-pinned` | A module's `requires_kernel` is at most the pinned kernel: a module builds only on a kernel it can be tested against. | ✓ |
+| `kernel-alone` | A commit that changes `kernel/` changes nothing else, so a kernel update is reviewed and reverted on its own. | ✓ `--since` |
+| `adapter-requires` | An adapter's `requires` (oldest provider version it compiles against) is a released version of that provider. | ✓ |
 
 ## Adding or changing a module
 
@@ -61,13 +72,37 @@ message. The pre-commit hook and CI run it with `--since`, which adds the histor
    `ui-gallery`) in its own change.
 3. Bump the version, add a `## Changes` line to the README.
 4. `node scripts/catalog.mjs` (regenerates `CATALOG.md`), then `npm run check`.
-5. `npm run testbed` (needs MySQL; see README › Working on the library). A new module is not
+5. Try it: `npm run sandbox -- <id>` makes a project from the pinned kernel with your module, the
+   providers of its required ports, and the preset — then run it (`npm run dev:api`,
+   `npm run dev:web` there).
+6. `npm run testbed` (needs MySQL; see README › Working on the library). A new module is not
    done until a testbed scenario installs it.
-6. Commit. The pre-commit hook runs the check again; the post-commit hook tags the new versions.
+7. Commit. The pre-commit hook runs the check again; the post-commit hook tags the new versions.
    Push with `git push --follow-tags`. CI runs the check, the tags check, and the testbed.
 
 Never bypass the hook (`git commit --no-verify`) to land a rule violation. If a rule is wrong,
 change the rule in `scripts/lib/rules.mjs` and this table in the same commit, and say why.
+`kernel/`, `scripts/`, the CI, and these documents have code owners (`.github/CODEOWNERS`):
+a change to them needs the maintainer's review.
+
+## When a module needs more from the kernel
+
+1. **Build it in the module first.** Most needs fit there: a table, a job (`d.Jobs.Every`), an
+   audit record (`d.Audit.Record`), settings (`config.Require`), a file (`d.Config.DataDir`).
+2. **Need another module? Use a port** in your module, with a ready-made adapter to the provider's
+   `contracts/` — never an import.
+3. **Still not possible?** Only these are the kernel's: the process lifecycle (`cmd/server`),
+   deploy and infrastructure (Dockerfile, compose, `deploy.sh`, the server), the request context,
+   and the frontend shell contract. If the need is one of them **and** several modules need it,
+   open a **Kernel request** issue (template in `.github/ISSUE_TEMPLATE/`). Meanwhile the module
+   ships what the current kernel allows.
+4. The skill's maintainer decides, releases the kernel in monorepo-elcodelabs (after running this
+   testbed against it), and brings it here with `npm run kernel:sync -- --skill <path>`: one
+   commit that touches only `kernel/`. Modules may then raise `requires_kernel`.
+
+A kernel version only adds: modules released for kernel N keep compiling and behaving the same
+on N+1. Something is removed only after a kernel that marks it deprecated, in a kernel the skill
+declares breaking, with upgrade notes (`kernel/reference/backend-go.md` › Kernel versions).
 
 ## One-time setup in a clone
 

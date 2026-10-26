@@ -1,0 +1,55 @@
+# PRODUCTION on the elcodelabs VPS — copied to ~/testbedapp/docker-compose.prod.yml, next to
+# ~/testbedapp/.env (chmod 600) and ~/testbedapp/deploy.sh. Deploy: `cd ~/testbedapp && ./deploy.sh <git-sha>`.
+#
+# IMAGE-ONLY — no `build:`. The 2 GB VPS only pulls images built by
+# .github/workflows/release-image.yml. Never build on the server.
+#
+# IMAGE_TAG is REQUIRED (no `latest` fallback): deploy.sh writes it into .env, so a manual
+# `docker compose up` stays on the version last deployed instead of a stale local `latest`.
+services:
+  app:
+    image: ghcr.io/__GHCR_OWNER__/testbed-app:${IMAGE_TAG:?IMAGE_TAG is not set — run ./deploy.sh <git-sha>}
+    container_name: testbedapp-app
+    restart: unless-stopped
+    env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # MySQL runs on the host, never in a container
+    ports:
+      - "127.0.0.1:__VPS_PORT__:8080" # loopback only; host nginx + TLS sits in front
+    # DATA_DIR: the one place the app writes (uploads, …) — survives deploys, owned by uid 10001
+    # (deploy.sh sees to it), backed up nightly with the database by the server's backup job.
+    volumes:
+      - ./data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - "no-new-privileges:true"
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M # shared 2 GB box — raise only with a measured reason
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: # cap logs so the disk never fills
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # One-off: `docker compose -f docker-compose.prod.yml --profile ops run --rm migrate`
+  # (deploy.sh runs it BEFORE the new container starts). Same image, golang-migrate entrypoint;
+  # DB_DSN is read from .env.
+  migrate:
+    image: ghcr.io/__GHCR_OWNER__/testbed-app:${IMAGE_TAG:?IMAGE_TAG is not set — run ./deploy.sh <git-sha>}
+    profiles: ["ops"]
+    entrypoint: ["migrate", "-path", "/app/migrations", "-database", "mysql://${DB_DSN}?multiStatements=true"]
+    command: ["up"]
+    env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
