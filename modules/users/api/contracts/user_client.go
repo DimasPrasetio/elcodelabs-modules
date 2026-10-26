@@ -5,6 +5,7 @@ package contracts
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrNotFound means no user matches.
@@ -16,6 +17,8 @@ type User struct {
 	Name     string
 	Email    string
 	IsActive bool
+	// PasswordChangedAt is zero until the password is first changed (GetByID only).
+	PasswordChangedAt time.Time
 }
 
 // Credentials is what signing in checks against. Only an auth provider should ask for it.

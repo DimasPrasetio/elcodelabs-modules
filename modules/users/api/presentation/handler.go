@@ -39,7 +39,8 @@ type updateRequest struct {
 	Name     string `json:"name"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
-	IsActive bool   `json:"is_active"`
+	// IsActive left out keeps the current state.
+	IsActive *bool `json:"is_active"`
 }
 
 // Permissions this module declares (users.module.go) and guards with.
@@ -66,7 +67,6 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/users/{id}", need(PermRead, h.get))
 	mux.Handle("POST /api/v1/users", need(PermManage, h.create))
 	mux.Handle("PUT /api/v1/users/{id}", need(PermManage, h.update))
-	mux.Handle("DELETE /api/v1/users/{id}", need(PermManage, h.delete))
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -130,18 +130,4 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, "Pengguna diperbarui", toDTO(u))
-}
-
-func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
-	id, err := request.PathInt64(r, "id")
-	if err != nil {
-		response.Error(w, r, err)
-		return
-	}
-	actor, _ := h.auth.UserID(r.Context())
-	if err := h.svc.Delete(r.Context(), actor, id); err != nil {
-		response.Error(w, r, err)
-		return
-	}
-	response.OK(w, "Pengguna dihapus", nil)
 }

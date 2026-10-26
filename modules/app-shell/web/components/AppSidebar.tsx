@@ -13,6 +13,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSkeleton,
   SidebarRail,
 } from "@/shared/components/primitives/sidebar";
 import { activeNavItem, appName } from "@/modules/app-shell/lib/nav";
@@ -33,7 +34,7 @@ function groupItems(items: NavItem[]): [string, NavItem[]][] {
 }
 
 export function AppSidebar() {
-  const { can } = useAccess();
+  const { can, ready } = useAccess();
   // Entries the user may not open are not shown (the API refuses them anyway).
   const items = useNavItems().filter((item) => !item.permission || can(item.permission));
   const footer = useSlot("sidebar-footer");
@@ -53,7 +54,19 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        {groupItems(items).map(([group, groupItems]) => (
+        {/* Until permissions arrive, placeholders instead of a menu that pops in or flashes empty. */}
+        {!ready && (
+          <SidebarGroup>
+            <SidebarMenu>
+              {[0, 1, 2, 3].map((i) => (
+                <SidebarMenuItem key={i}>
+                  <SidebarMenuSkeleton showIcon />
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroup>
+        )}
+        {ready && groupItems(items).map(([group, groupItems]) => (
           <SidebarGroup key={group || "_"}>
             {group && (
               <SidebarGroupLabel className="text-2xs tracking-wide text-sidebar-muted uppercase">

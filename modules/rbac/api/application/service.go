@@ -107,10 +107,57 @@ func (s *Service) clean(in RoleInput) (RoleInput, error) {
 	return in, v.Err()
 }
 
-func (s *Service) CreateRole(ctx context.Context, in RoleInput) (domain.Role, error) {
+// errBeyondOwn refuses handing out (or taking away) more than the actor holds — the rule that
+// keeps rbac.manage from being a path to every permission.
+var errBeyondOwn = apperror.Forbidden("Anda hanya dapat mengelola izin dan peran yang Anda pegang sendiri")
+
+// holds reports whether actor holds every one of perms.
+func (s *Service) holds(ctx context.Context, actor int64, perms []string) bool {
+	granted, err := s.Granted(ctx, actor)
+	if err != nil {
+		return false
+	}
+	for _, p := range perms {
+		if !domain.Grants(granted, p) {
+			return false
+		}
+	}
+	return true
+}
+
+// holdsRole reports whether actor holds everything the role grants (the Administrator role:
+// every permission, so only an administrator).
+func (s *Service) holdsRole(ctx context.Context, actor int64, r domain.Role) bool {
+	if r.IsSystem {
+		return s.holds(ctx, actor, []string{domain.Wildcard})
+	}
+	return s.holds(ctx, actor, r.Permissions)
+}
+
+// Covers reports whether actor holds every permission target holds — whether actor may act on
+// target's account (kernel Authorizer.Covers). A lookup failure denies.
+func (s *Service) Covers(ctx context.Context, actor, target int64) bool {
+	if actor == target {
+		return true
+	}
+	theirs, err := s.Granted(ctx, target)
+	if err != nil {
+		return false
+	}
+	perms := make([]string, 0, len(theirs))
+	for p := range theirs {
+		perms = append(perms, p)
+	}
+	return s.holds(ctx, actor, perms)
+}
+
+func (s *Service) CreateRole(ctx context.Context, actor int64, in RoleInput) (domain.Role, error) {
 	in, err := s.clean(in)
 	if err != nil {
 		return domain.Role{}, err
+	}
+	if !s.holds(ctx, actor, in.Permissions) {
+		return domain.Role{}, errBeyondOwn
 	}
 	id, err := s.repo.CreateRole(ctx, in.Name, in.Description, in.Permissions)
 	if err != nil {
@@ -120,7 +167,7 @@ func (s *Service) CreateRole(ctx context.Context, in RoleInput) (domain.Role, er
 	return s.repo.GetRole(ctx, id)
 }
 
-func (s *Service) UpdateRole(ctx context.Context, id int64, in RoleInput) (domain.Role, error) {
+func (s *Service) UpdateRole(ctx context.Context, actor, id int64, in RoleInput) (domain.Role, error) {
 	current, err := s.repo.GetRole(ctx, id)
 	if err != nil {
 		return domain.Role{}, notFound(err)
@@ -131,6 +178,9 @@ func (s *Service) UpdateRole(ctx context.Context, id int64, in RoleInput) (domai
 	if in, err = s.clean(in); err != nil {
 		return domain.Role{}, err
 	}
+	if !s.holdsRole(ctx, actor, current) || !s.holds(ctx, actor, in.Permissions) {
+		return domain.Role{}, errBeyondOwn
+	}
 	if err := s.repo.UpdateRole(ctx, id, in.Name, in.Description, in.Permissions); err != nil {
 		return domain.Role{}, nameTaken(notFound(err))
 	}
@@ -138,13 +188,16 @@ func (s *Service) UpdateRole(ctx context.Context, id int64, in RoleInput) (domai
 	return s.repo.GetRole(ctx, id)
 }
 
-func (s *Service) DeleteRole(ctx context.Context, id int64) error {
+func (s *Service) DeleteRole(ctx context.Context, actor, id int64) error {
 	r, err := s.repo.GetRole(ctx, id)
 	if err != nil {
 		return notFound(err)
 	}
 	if r.IsSystem {
 		return apperror.Conflict("Peran Administrator tidak dapat dihapus")
+	}
+	if !s.holdsRole(ctx, actor, r) {
+		return errBeyondOwn
 	}
 	if err := s.repo.DeleteRole(ctx, id); err != nil {
 		return notFound(err)
@@ -177,10 +230,15 @@ func (s *Service) Members(ctx context.Context, roleID int64) ([]Member, error) {
 	return out, nil
 }
 
-// AddMember gives the role to a user the directory knows.
-func (s *Service) AddMember(ctx context.Context, roleID, userID int64) error {
-	if _, err := s.GetRole(ctx, roleID); err != nil {
+// AddMember gives the role to a user the directory knows — only a role whose permissions the
+// actor holds, so nobody can make themselves (or a friend) Administrator.
+func (s *Service) AddMember(ctx context.Context, actor, roleID, userID int64) error {
+	r, err := s.GetRole(ctx, roleID)
+	if err != nil {
 		return err
+	}
+	if !s.holdsRole(ctx, actor, r) {
+		return errBeyondOwn
 	}
 	if _, err := s.users.Get(ctx, userID); errors.Is(err, ports.ErrUserNotFound) {
 		return apperror.NotFound("Pengguna tidak ditemukan")
@@ -196,10 +254,13 @@ func (s *Service) AddMember(ctx context.Context, roleID, userID int64) error {
 
 // RemoveMember takes the role away. The last Administrator cannot lose it — someone must
 // always be able to manage roles.
-func (s *Service) RemoveMember(ctx context.Context, roleID, userID int64) error {
+func (s *Service) RemoveMember(ctx context.Context, actor, roleID, userID int64) error {
 	r, err := s.GetRole(ctx, roleID)
 	if err != nil {
 		return err
+	}
+	if !s.holdsRole(ctx, actor, r) {
+		return errBeyondOwn
 	}
 	if r.IsSystem {
 		ids, err := s.repo.Members(ctx, roleID)
@@ -266,20 +327,33 @@ func (s *Service) Can(ctx context.Context, userID int64, permission string) bool
 	return err == nil && domain.Grants(granted, permission)
 }
 
-// Bootstrap gives the Administrator role to the user with email when nobody holds it yet —
-// how a fresh install gets someone who can manage roles.
+// Bootstrap gives the Administrator role to the user with email when no active user holds it
+// — how a fresh install gets someone who can manage roles, and how an install whose only
+// administrators were deactivated or removed gets one back.
 func (s *Service) Bootstrap(ctx context.Context, email string) (assigned bool, err error) {
 	adminID, err := s.repo.RoleIDByName(ctx, domain.AdminRole)
 	if err != nil {
 		return false, err
 	}
 	ids, err := s.repo.Members(ctx, adminID)
-	if err != nil || len(ids) > 0 {
+	if err != nil {
 		return false, err
+	}
+	for _, id := range ids {
+		u, err := s.users.Get(ctx, id)
+		if err == nil && u.IsActive {
+			return false, nil
+		}
+		if err != nil && !errors.Is(err, ports.ErrUserNotFound) {
+			return false, err
+		}
 	}
 	u, err := s.users.FindByEmail(ctx, email)
 	if err != nil {
 		return false, err
+	}
+	if !u.IsActive {
+		return false, errors.New("the bootstrap administrator's account is deactivated")
 	}
 	if err := s.repo.AddMember(ctx, adminID, u.ID); err != nil {
 		return false, err

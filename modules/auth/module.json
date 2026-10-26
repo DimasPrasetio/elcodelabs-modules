@@ -1,9 +1,9 @@
 {
   "id": "auth",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "kind": "fullstack",
   "title": "Authentication",
-  "summary": "Email + password sign-in: JWT in an HttpOnly cookie (Bearer for non-browser clients), login/logout/me, failed-attempt limit, the frontend guard, sign-in page, and user menu. Fills the kernel's d.Auth.",
+  "summary": "Email + password sign-in with server-side sessions: JWT in an HttpOnly __Host- cookie (Bearer for non-browser clients on request), login/logout/me, sessions that end on sign-out, deactivation, or a password change, layered sign-in limits (person, address, account), the frontend guard, sign-in page, and user menu. Fills the kernel's d.Auth.",
   "when_to_use": [
     "Any app where people sign in with an email and password the app checks itself."
   ],
@@ -14,7 +14,7 @@
   "stacks": [
     "go"
   ],
-  "requires_kernel": 3,
+  "requires_kernel": 4,
   "provides": {
     "contracts": [],
     "kernel": [
@@ -25,7 +25,7 @@
     {
       "name": "UserStore",
       "required": true,
-      "description": "Find a user's credentials (bcrypt hash, active flag) by email, and a user's profile by ID.",
+      "description": "Find a user's credentials (bcrypt hash, active flag) by email, and a user's profile by ID — with when their password last changed, if the store tracks it.",
       "adapters": {
         "users": {
           "file": "adapters/userstore_users.go",
@@ -38,7 +38,9 @@
     "ui-core",
     "ui-forms"
   ],
-  "owns_tables": [],
+  "owns_tables": [
+    "auth_sessions"
+  ],
   "env": [
     {
       "name": "JWT_SECRET",
@@ -62,6 +64,10 @@
     ]
   },
   "npm_dependencies": {},
+  "go_dependencies": {
+    "github.com/golang-jwt/jwt/v5": "v5.3.1",
+    "golang.org/x/crypto": "v0.58.0"
+  },
   "install": {
     "api": "apps/api/internal/modules/auth",
     "web": "apps/web/src/modules/auth"

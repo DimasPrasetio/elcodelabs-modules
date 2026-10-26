@@ -14,3 +14,8 @@ Lists and tables, in Bingkai Navy's design. Builds on `ui-core`.
 
 The list template: `PageHeader` (one primary action) → card with `Toolbar plain` + `DataTable` +
 `Pagination`.
+
+## Changes
+
+- **0.2.0** — a clickable row shows a visible focus ring when reached with the keyboard
+  (WCAG 2.4.7).

@@ -5,8 +5,8 @@ import type { CreateUserValues, UpdateUserValues } from "@/modules/users/schemas
 
 const BASE = "/api/v1/users";
 
-export async function listUsers(params: { page: number; limit: number; q: string }): Promise<ApiPage<User>> {
-  const { data } = await httpClient.get<ApiPage<User>>(BASE, { params });
+export async function listUsers(params: { page: number; limit: number; q: string }, signal?: AbortSignal): Promise<ApiPage<User>> {
+  const { data } = await httpClient.get<ApiPage<User>>(BASE, { params, signal });
   return data;
 }
 
@@ -20,6 +20,8 @@ export async function updateUser(id: number, values: UpdateUserValues): Promise<
   return data.data;
 }
 
-export async function deleteUser(id: number): Promise<void> {
-  await httpClient.delete(`${BASE}/${id}`);
+/** Deactivating ends the user's sessions on their next request; history that names them stays valid. */
+export async function setUserActive(user: User, active: boolean): Promise<User> {
+  const { data } = await httpClient.put<ApiSuccess<User>>(`${BASE}/${user.id}`, { name: user.name, email: user.email, is_active: active });
+  return data.data;
 }

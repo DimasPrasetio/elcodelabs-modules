@@ -1,6 +1,6 @@
 {
   "id": "app-shell",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "kind": "web",
   "title": "App shell",
   "summary": "The frame around protected pages: collapsible sidebar built from every module's nav, inset canvas, breadcrumb header, and slots for a user menu.",

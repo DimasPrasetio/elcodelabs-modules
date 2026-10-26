@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"__GO_MODULE__/internal/modules/users/application"
 	"__GO_MODULE__/internal/modules/users/domain"
@@ -83,18 +84,28 @@ func (m *memRepo) Update(_ context.Context, u domain.User) error {
 	return nil
 }
 
-func (m *memRepo) UpdatePassword(_ context.Context, id int64, hash string) error {
+func (m *memRepo) UpdatePassword(_ context.Context, id int64, hash string, at time.Time) error {
 	m.hashes[id] = hash
+	u := m.users[id]
+	u.PasswordChangedAt = at
+	m.users[id] = u
 	return nil
 }
 
-func (m *memRepo) Delete(_ context.Context, id int64) error {
-	if _, ok := m.users[id]; !ok {
-		return application.ErrNotFound
+// guard covers every account except those listed (the "administrators" an actor cannot touch).
+type guard map[int64]bool
+
+func (g guard) Covers(_ context.Context, target int64) bool { return !g[target] }
+
+func newService(repo application.Repository, protected ...int64) *application.Service {
+	g := guard{}
+	for _, id := range protected {
+		g[id] = true
 	}
-	delete(m.users, id)
-	return nil
+	return application.NewService(repo, plainHasher{}, g)
 }
+
+func boolPtr(b bool) *bool { return &b }
 
 type plainHasher struct{}
 
@@ -111,7 +122,7 @@ func status(t *testing.T, err error) int {
 
 func TestCreateNormalizesEmailAndHashes(t *testing.T) {
 	repo := newMemRepo()
-	svc := application.NewService(repo, plainHasher{})
+	svc := newService(repo)
 	u, err := svc.Create(context.Background(), application.CreateInput{Name: "Ana", Email: "  Ana@Example.COM ", Password: "secret123", IsActive: true})
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +136,7 @@ func TestCreateNormalizesEmailAndHashes(t *testing.T) {
 }
 
 func TestCreateRejectsInvalidInput(t *testing.T) {
-	svc := application.NewService(newMemRepo(), plainHasher{})
+	svc := newService(newMemRepo())
 	_, err := svc.Create(context.Background(), application.CreateInput{Name: "", Email: "nope", Password: "short"})
 	if got := status(t, err); got != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422", got)
@@ -133,7 +144,7 @@ func TestCreateRejectsInvalidInput(t *testing.T) {
 }
 
 func TestCreateDuplicateEmailIsAFieldError(t *testing.T) {
-	svc := application.NewService(newMemRepo(), plainHasher{})
+	svc := newService(newMemRepo())
 	in := application.CreateInput{Name: "Ana", Email: "ana@example.com", Password: "secret123", IsActive: true}
 	if _, err := svc.Create(context.Background(), in); err != nil {
 		t.Fatal(err)
@@ -144,20 +155,67 @@ func TestCreateDuplicateEmailIsAFieldError(t *testing.T) {
 	}
 }
 
-func TestCannotDeactivateOrDeleteYourself(t *testing.T) {
-	svc := application.NewService(newMemRepo(), plainHasher{})
+func TestCannotDeactivateYourself(t *testing.T) {
+	svc := newService(newMemRepo())
 	u, _ := svc.Create(context.Background(), application.CreateInput{Name: "Ana", Email: "ana@example.com", Password: "secret123", IsActive: true})
-	_, err := svc.Update(context.Background(), u.ID, u.ID, application.UpdateInput{Name: "Ana", Email: u.Email, IsActive: false})
+	_, err := svc.Update(context.Background(), u.ID, u.ID, application.UpdateInput{Name: "Ana", Email: u.Email, IsActive: boolPtr(false)})
 	if got := status(t, err); got != http.StatusConflict {
 		t.Errorf("deactivate self: status = %d, want 409", got)
 	}
-	if got := status(t, svc.Delete(context.Background(), u.ID, u.ID)); got != http.StatusConflict {
-		t.Errorf("delete self: status = %d, want 409", got)
+}
+
+func TestCannotTouchAMorePrivilegedAccount(t *testing.T) {
+	repo := newMemRepo()
+	admin := create(t, newService(repo), "admin@example.com")
+	operator := create(t, newService(repo), "op@example.com")
+	svc := newService(repo, admin.ID) // the operator does not cover the admin
+	for name, in := range map[string]application.UpdateInput{
+		"reset password": {Name: "Admin", Email: admin.Email, Password: "taken-over-1"},
+		"change email":   {Name: "Admin", Email: "op2@example.com"},
+		"deactivate":     {Name: "Admin", Email: admin.Email, IsActive: boolPtr(false)},
+	} {
+		if _, err := svc.Update(context.Background(), operator.ID, admin.ID, in); status(t, err) != http.StatusForbidden {
+			t.Errorf("%s: want 403, got %v", name, err)
+		}
+	}
+	if repo.hashes[admin.ID] != "hash:secret123" {
+		t.Fatal("the administrator's password changed")
 	}
 }
 
+func TestOmittedIsActiveKeepsTheState(t *testing.T) {
+	repo := newMemRepo()
+	svc := newService(repo)
+	u := create(t, svc, "ana@example.com")
+	got, err := svc.Update(context.Background(), 99, u.ID, application.UpdateInput{Name: "Ana B", Email: u.Email})
+	if err != nil || !got.IsActive {
+		t.Fatalf("an update without is_active deactivated the user: %+v %v", got, err)
+	}
+}
+
+func TestPasswordChangeIsRecorded(t *testing.T) {
+	repo := newMemRepo()
+	svc := newService(repo)
+	u := create(t, svc, "ana@example.com")
+	if _, err := svc.Update(context.Background(), 99, u.ID, application.UpdateInput{Name: "Ana", Email: u.Email, Password: "new-secret-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if repo.users[u.ID].PasswordChangedAt.IsZero() {
+		t.Fatal("PasswordChangedAt not set: earlier sessions would survive the change")
+	}
+}
+
+func create(t *testing.T, svc *application.Service, email string) domain.User {
+	t.Helper()
+	u, err := svc.Create(context.Background(), application.CreateInput{Name: "User", Email: email, Password: "secret123", IsActive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
 func TestBootstrapOnlyWhenEmpty(t *testing.T) {
-	svc := application.NewService(newMemRepo(), plainHasher{})
+	svc := newService(newMemRepo())
 	created, err := svc.Bootstrap(context.Background(), "Admin", "admin@example.com", "secret123")
 	if err != nil || !created {
 		t.Fatalf("first bootstrap: created=%v err=%v", created, err)
@@ -169,7 +227,7 @@ func TestBootstrapOnlyWhenEmpty(t *testing.T) {
 }
 
 func TestGetMissingIs404(t *testing.T) {
-	svc := application.NewService(newMemRepo(), plainHasher{})
+	svc := newService(newMemRepo())
 	_, err := svc.Get(context.Background(), 99)
 	if got := status(t, err); got != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", got)

@@ -31,9 +31,9 @@ type Module struct {
 func New(d *kernel.Deps) (*Module, error) {
 	d.Authz.Declare(
 		kernel.Permission{Name: presentation.PermRead, Module: "users", Description: "Melihat daftar pengguna"},
-		kernel.Permission{Name: presentation.PermManage, Module: "users", Description: "Menambah, mengubah, menonaktifkan, dan menghapus pengguna"},
+		kernel.Permission{Name: presentation.PermManage, Module: "users", Description: "Menambah, mengubah, dan menonaktifkan pengguna"},
 	)
-	svc := application.NewService(infrastructure.NewRepository(d.DB), infrastructure.BcryptHasher{})
+	svc := application.NewService(infrastructure.NewRepository(d.DB), infrastructure.BcryptHasher{}, d.Authz)
 	m := &Module{svc: svc, handler: presentation.NewHandler(svc, d.Auth, d.Authz)}
 
 	email, password := config.Get("USERS_BOOTSTRAP_EMAIL", ""), config.Get("USERS_BOOTSTRAP_PASSWORD", "")
@@ -65,7 +65,7 @@ func (c client) GetByID(ctx context.Context, id int64) (contracts.User, error) {
 	if err != nil {
 		return contracts.User{}, contractErr(err)
 	}
-	return contracts.User{ID: u.ID, Name: u.Name, Email: u.Email, IsActive: u.IsActive}, nil
+	return contracts.User{ID: u.ID, Name: u.Name, Email: u.Email, IsActive: u.IsActive, PasswordChangedAt: u.PasswordChangedAt}, nil
 }
 
 func (c client) GetByEmail(ctx context.Context, email string) (contracts.User, error) {

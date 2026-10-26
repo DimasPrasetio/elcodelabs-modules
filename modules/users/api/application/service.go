@@ -4,6 +4,7 @@ package application
 import (
 	"context"
 	"errors"
+	"time"
 
 	"__GO_MODULE__/internal/modules/users/domain"
 	"__GO_MODULE__/internal/shared/apperror"
@@ -41,8 +42,13 @@ type Repository interface {
 	GetCredentialsByEmail(ctx context.Context, email string) (Credentials, error)
 	Create(ctx context.Context, u NewUser) (int64, error)
 	Update(ctx context.Context, u domain.User) error
-	UpdatePassword(ctx context.Context, id int64, hash string) error
-	Delete(ctx context.Context, id int64) error
+	UpdatePassword(ctx context.Context, id int64, hash string, at time.Time) error
+}
+
+// Guard answers whether the signed-in user may act on another user's account — the kernel's
+// d.Authz satisfies it: an account holding permissions the actor lacks is off limits.
+type Guard interface {
+	Covers(ctx context.Context, target int64) bool
 }
 
 // Hasher turns a password into a stored hash.
@@ -54,10 +60,11 @@ type Hasher interface {
 type Service struct {
 	repo   Repository
 	hasher Hasher
+	guard  Guard
 }
 
-func NewService(repo Repository, hasher Hasher) *Service {
-	return &Service{repo: repo, hasher: hasher}
+func NewService(repo Repository, hasher Hasher, guard Guard) *Service {
+	return &Service{repo: repo, hasher: hasher, guard: guard}
 }
 
 // CreateInput is what creating a user takes.
@@ -68,12 +75,13 @@ type CreateInput struct {
 	IsActive bool
 }
 
-// UpdateInput is what changing a user takes. An empty Password keeps the current one.
+// UpdateInput is what changing a user takes. An empty Password keeps the current one; a nil
+// IsActive keeps the current state.
 type UpdateInput struct {
 	Name     string
 	Email    string
 	Password string
-	IsActive bool
+	IsActive *bool
 }
 
 func (s *Service) List(ctx context.Context, search string, p pagination.Params) ([]domain.User, int64, error) {
@@ -115,14 +123,22 @@ func (s *Service) Update(ctx context.Context, actorID, id int64, in UpdateInput)
 	if err := v.Err(); err != nil {
 		return domain.User{}, err
 	}
-	if id == actorID && !in.IsActive {
+	if id == actorID && in.IsActive != nil && !*in.IsActive {
 		return domain.User{}, apperror.Conflict("Anda tidak dapat menonaktifkan akun sendiri")
 	}
 	u, err := s.repo.Get(ctx, id)
 	if err != nil {
 		return domain.User{}, notFound(err)
 	}
-	u.Name, u.Email, u.IsActive = in.Name, in.Email, in.IsActive
+	// Someone else's account: only when it holds no permission the actor lacks — an operator
+	// cannot reset an administrator's password, change their email, or deactivate them.
+	if id != actorID && !s.guard.Covers(ctx, id) {
+		return domain.User{}, apperror.Forbidden("Anda tidak dapat mengubah pengguna yang memiliki hak lebih tinggi")
+	}
+	u.Name, u.Email = in.Name, in.Email
+	if in.IsActive != nil {
+		u.IsActive = *in.IsActive
+	}
 	if err := s.repo.Update(ctx, u); err != nil {
 		return domain.User{}, emailTaken(notFound(err))
 	}
@@ -131,19 +147,12 @@ func (s *Service) Update(ctx context.Context, actorID, id int64, in UpdateInput)
 		if err != nil {
 			return domain.User{}, err
 		}
-		if err := s.repo.UpdatePassword(ctx, id, hash); err != nil {
+		// Recording when it changed ends every session opened before (the auth provider checks).
+		if err := s.repo.UpdatePassword(ctx, id, hash, time.Now().UTC()); err != nil {
 			return domain.User{}, err
 		}
 	}
 	return s.repo.Get(ctx, id)
-}
-
-// Delete removes a user. Nobody can delete themselves.
-func (s *Service) Delete(ctx context.Context, actorID, id int64) error {
-	if id == actorID {
-		return apperror.Conflict("Anda tidak dapat menghapus akun sendiri")
-	}
-	return notFound(s.repo.Delete(ctx, id))
 }
 
 // Bootstrap creates the first user when the table is empty — how a fresh install gets an

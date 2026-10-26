@@ -11,15 +11,27 @@ function git(libRoot, args, input) {
   return r.status === 0 ? r.stdout : undefined;
 }
 
-/** The library's commit and whether its tree differs from it. commit is null outside git. */
+/**
+ * The library's commit, whether its tree differs from it, and whether the commit is on a
+ * remote branch — one that is not exists on this machine only, so another machine cannot
+ * upgrade from it (the release tags cover that). commit is null outside git.
+ */
 export function libraryState(libRoot) {
   const commit = git(libRoot, ["rev-parse", "HEAD"])?.trim() ?? null;
   const dirty = commit ? (git(libRoot, ["status", "--porcelain", "--", "modules", "themes"]) ?? "").trim() !== "" : true;
-  return { commit, dirty };
+  const pushed = commit ? (git(libRoot, ["branch", "-r", "--contains", commit]) ?? "").trim() !== "" : false;
+  return { commit, dirty, pushed };
 }
 
-/** The library as it is on disk. */
+// Files no module ever ships, even from a library outside git.
+const JUNK = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini)$/;
+
+/**
+ * The library as it is on disk. Inside git, only files git would commit count (tracked, or new
+ * and not ignored) — so .DS_Store and other ignored files never reach a project.
+ */
 export function workingTree(libRoot) {
+  const inGit = git(libRoot, ["rev-parse", "--is-inside-work-tree"])?.trim() === "true";
   return {
     label: "working tree",
     exists: (rel) => existsSync(join(libRoot, rel)),
@@ -28,18 +40,34 @@ export function workingTree(libRoot) {
     list(rel) {
       const root = join(libRoot, rel);
       if (!existsSync(root)) return [];
-      return readdirSync(root, { recursive: true, withFileTypes: true })
-        .filter((e) => e.isFile())
-        .map((e) => relative(root, join(e.parentPath ?? e.path, e.name)))
-        .sort();
+      let files;
+      if (inGit) {
+        const out = git(libRoot, ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", rel]) ?? "";
+        files = [...new Set(out.split("\0").filter(Boolean))]
+          .filter((f) => existsSync(join(libRoot, f)))
+          .map((f) => f.slice(rel.length + 1));
+      } else {
+        files = readdirSync(root, { recursive: true, withFileTypes: true })
+          .filter((e) => e.isFile())
+          .map((e) => relative(root, join(e.parentPath ?? e.path, e.name)));
+      }
+      return files.filter((f) => !JUNK.test(f)).sort();
     },
   };
 }
 
-/** The library as it was at commit. */
-export function atCommit(libRoot, commit) {
+/**
+ * The library as it was at commit. When that commit is gone (never pushed from the machine
+ * that installed, or history rewritten), fallbackTag — the module's <id>/v<version> release
+ * tag — stands in for it: the same version, so the same files.
+ */
+export function atCommit(libRoot, commit, fallbackTag) {
   if (git(libRoot, ["cat-file", "-e", `${commit}^{commit}`]) === undefined) {
-    throw new Error(`commit ${commit} is not in the library at ${libRoot} — fetch it, or reinstall the module`);
+    const tagged = fallbackTag && git(libRoot, ["rev-parse", "--verify", "--quiet", `refs/tags/${fallbackTag}^{commit}`])?.trim();
+    if (!tagged) {
+      throw new Error(`commit ${commit.slice(0, 12)} is not in the library at ${libRoot}${fallbackTag ? ` and there is no tag ${fallbackTag}` : ""} — git fetch --tags in the library, or remove and add the module again`);
+    }
+    commit = tagged;
   }
   const files = (git(libRoot, ["ls-tree", "-r", "--name-only", commit]) ?? "").split("\n").filter(Boolean);
   const set = new Set(files);

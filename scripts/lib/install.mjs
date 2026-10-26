@@ -18,10 +18,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { atCommit, libraryState, workingTree } from "./source.mjs";
 
-const read = (p) => readFileSync(p, "utf8");
+// Line endings are not a change: a checkout with core.autocrlf must not look edited everywhere.
+const norm = (s) => s.replace(/\r\n/g, "\n");
+const read = (p) => norm(readFileSync(p, "utf8"));
 const readJSON = (p) => JSON.parse(read(p));
 const writeJSON = (p, v) => writeFileSync(p, JSON.stringify(v, null, 2) + "\n");
-const sha = (s) => createHash("sha256").update(s).digest("hex");
+const sha = (s) => createHash("sha256").update(norm(s)).digest("hex");
 
 function writeFile(p, content) {
   mkdirSync(dirname(p), { recursive: true });
@@ -211,25 +213,84 @@ function sortedObject(o) {
   return Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)));
 }
 
-function addNpmDeps(project, deps) {
+const semverParts = (v) => (String(v).match(/(\d+)\.(\d+)\.(\d+)/) ?? [0, 0, 0, 0]).slice(1).map(Number);
+const semverGt = (a, b) => {
+  const [x, y] = [semverParts(a), semverParts(b)];
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  return false;
+};
+
+/**
+ * Adds npm dependencies to apps/web. A package the project already has at another version keeps
+ * the higher of the two — never a silent downgrade — and the clash goes into notes.
+ */
+function addNpmDeps(project, deps, notes = []) {
   if (!deps || Object.keys(deps).length === 0) return [];
   const p = join(project, "apps/web/package.json");
   const pkg = readJSON(p);
-  const added = Object.keys(deps).filter((d) => pkg.dependencies?.[d] !== deps[d]);
-  pkg.dependencies = sortedObject({ ...pkg.dependencies, ...deps });
+  const have = pkg.dependencies ?? {};
+  const added = [];
+  for (const [name, want] of Object.entries(deps)) {
+    if (have[name] === want) continue;
+    if (have[name] && !semverGt(want, have[name])) {
+      notes.push(`npm: ${name} stays at ${have[name]} (this module asks for ${want}) — check it works with both`);
+      continue;
+    }
+    if (have[name]) notes.push(`npm: ${name} raised from ${have[name]} to ${want}`);
+    have[name] = want;
+    added.push(name);
+  }
+  pkg.dependencies = sortedObject(have);
   writeJSON(p, pkg);
   return added;
 }
 
-function addEnv(project, id, env) {
-  const file = join(project, ".env.example");
-  if (!existsSync(file) || !(env ?? []).length) return [];
-  const text = read(file);
-  const missing = env.filter((e) => !new RegExp(`^${e.name}=`, "m").test(text));
-  if (missing.length) {
-    writeFileSync(file, text + `\n# --- ${id} module ---\n` + missing.map((e) => `# ${e.description}\n${e.name}=`).join("\n") + "\n");
+/**
+ * Pins a module's Go dependencies in apps/api/go.mod (go_dependencies: path → minimum version),
+ * so go mod tidy resolves the version the module was tested with rather than whatever is newest.
+ */
+function addGoDeps(project, deps, notes = []) {
+  const file = join(project, "apps/api/go.mod");
+  if (!deps || Object.keys(deps).length === 0 || !existsSync(file)) return [];
+  let mod = read(file);
+  const added = [];
+  for (const [path, version] of Object.entries(deps)) {
+    const have = mod.match(new RegExp(`^\\s*(?:require\\s+)?${path.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}\\s+(v\\S+)`, "m"));
+    if (have) {
+      if (semverGt(version, have[1])) notes.push(`go: ${path} is ${have[1]} here; this module was tested with ${version} — go get ${path}@${version}`);
+      continue;
+    }
+    mod = mod.includes("require (")
+      ? mod.replace("require (\n", `require (\n\t${path} ${version}\n`)
+      : `${mod.trimEnd()}\n\nrequire ${path} ${version}\n`;
+    added.push(path);
   }
-  return missing.map((e) => e.name);
+  writeFileSync(file, mod);
+  return added;
+}
+
+/**
+ * Lists a module's settings in .env.example (development) and in
+ * infra/elcodelabs/.env.production.example (the server). In the production example a required
+ * one is written KEY=<required>: deploy.sh refuses to start a version while it is empty there.
+ */
+function addEnv(project, id, env) {
+  if (!(env ?? []).length) return [];
+  const added = new Set();
+  for (const [rel, line] of [
+    [".env.example", (e) => `# ${e.description}\n${e.name}=`],
+    ["infra/elcodelabs/.env.production.example", (e) => `# ${e.description}${e.required ? "" : " (optional)"}\n${e.required ? `${e.name}=<required>` : `# ${e.name}=`}`],
+  ]) {
+    const file = join(project, rel);
+    if (!existsSync(file)) continue;
+    const text = read(file);
+    const missing = env.filter((e) => !new RegExp(`^#?\\s*${e.name}=`, "m").test(text));
+    if (missing.length) {
+      writeFileSync(file, text.trimEnd() + `\n\n# --- ${id} module ---\n` + missing.map(line).join("\n") + "\n");
+      missing.forEach((e) => added.add(e.name));
+    }
+  }
+  return [...added];
 }
 
 function addSqlcBlock(project, id) {
@@ -353,7 +414,9 @@ export function installModule(libRoot, project, id, options = {}) {
       insertBefore(reg, "// elco:modules:end", `  ${name},\n`);
     }
   }
-  const npm = addNpmDeps(project, m.npm_dependencies);
+  const notes = [];
+  const npm = addNpmDeps(project, m.npm_dependencies, notes);
+  const go = addGoDeps(project, m.go_dependencies, notes);
   const env = addEnv(project, id, m.env);
   addModuleMapRow(project, m);
 
@@ -377,9 +440,12 @@ export function installModule(libRoot, project, id, options = {}) {
     files: files.size,
     migrations: Object.keys(migrations).length,
     npm,
+    go,
     env: (m.env ?? []).map((e) => ({ ...e, added: env.includes(e.name) })),
     ports: Object.fromEntries(Object.entries(options.ports ?? {}).map(([k, v]) => [k, typeof v === "string" ? v : `expr ${v.expr}`])),
     dirty: state.dirty,
+    pushed: state.pushed,
+    notes,
     tookOver: takeovers.map(([owner, path]) => `${path} (from ${owner})`),
   };
 }
@@ -473,8 +539,12 @@ function merge3(ours, base, theirs, label) {
   }
 }
 
-/** Merges base → theirs into the project's files. */
-function mergeFiles(project, baseFiles, newFiles) {
+/**
+ * Merges base → theirs into the project's files. ownedElsewhere holds paths another installed
+ * module now owns (a file that moved between modules): the library dropping it here is not a
+ * reason to delete it.
+ */
+function mergeFiles(project, baseFiles, newFiles, ownedElsewhere = new Set()) {
   const report = { updated: [], added: [], removed: [], keptChanged: [], conflicts: [], unchanged: 0 };
   const paths = new Set([...baseFiles.keys(), ...newFiles.keys()]);
   for (const path of [...paths].sort()) {
@@ -485,11 +555,17 @@ function mergeFiles(project, baseFiles, newFiles) {
     if (theirs === undefined) {
       // The library dropped this file.
       if (ours === undefined) continue;
+      if (ownedElsewhere.has(path)) { report.keptChanged.push(`${path} (moved to another module)`); continue; }
       if (ours === base) { rmSync(full); report.removed.push(path); }
       else report.keptChanged.push(`${path} (removed in the library, kept because the project changed it)`);
       continue;
     }
     if (base === theirs) { report.unchanged++; continue; }
+    if (ours === undefined && base !== undefined) {
+      // The project deleted a file the module shipped: that is the project's decision.
+      report.keptChanged.push(`${path} (deleted here — the library changed it; restore it by hand if you need the change)`);
+      continue;
+    }
     if (ours === undefined || ours === base) {
       writeFile(full, theirs);
       (base === undefined ? report.added : report.updated).push(path);
@@ -501,6 +577,11 @@ function mergeFiles(project, baseFiles, newFiles) {
     (merged.conflicts > 0 ? report.conflicts : report.updated).push(path);
   }
   return report;
+}
+
+function removeLine(file, line) {
+  const src = read(file);
+  if (src.includes(line)) writeFileSync(file, src.replace(line, ""));
 }
 
 function replaceLines(file, oldLines, newLines) {
@@ -526,13 +607,14 @@ export function upgrade(libRoot, project, id, options = {}) {
     const entry = lock.preset;
     if (!entry) throw new Error("no preset is applied");
     if (!entry.commit) throw new Error("the preset was applied from a library outside git — its base cannot be recovered");
-    const baseSrc = atCommit(libRoot, entry.commit);
+    const baseSrc = atCommit(libRoot, entry.commit, `${entry.id}/v${entry.version}`);
     const preset = presetFrom(theirsSrc, entry.id);
+    const notes = [];
     const report = mergeFiles(project, presetFiles(baseSrc, entry.id), presetFiles(theirsSrc, entry.id));
-    report.npm = addNpmDeps(project, preset.npm_dependencies);
+    report.npm = addNpmDeps(project, preset.npm_dependencies, notes);
     lock.preset = { ...entry, version: preset.version, commit: state.commit, dirty: state.dirty, files: Object.fromEntries([...presetFiles(theirsSrc, entry.id)].map(([p, c]) => [p, sha(c)])) };
     writeLock(project, lock);
-    return { id: `preset:${entry.id}`, from: entry.version, to: preset.version, ...report, notes: [] };
+    return { id: `preset:${entry.id}`, from: entry.version, to: preset.version, ...report, notes };
   }
 
   const entry = lock.modules[id];
@@ -540,7 +622,7 @@ export function upgrade(libRoot, project, id, options = {}) {
   if (entry.status === "detached") throw new Error(`${id} is detached: the project owns it now and it is never upgraded`);
   if (!entry.commit) throw new Error(`${id} was installed from a library outside git — its base cannot be recovered`);
 
-  const baseSrc = atCommit(libRoot, entry.commit);
+  const baseSrc = atCommit(libRoot, entry.commit, `${id}/v${entry.version}`);
   const mBase = manifestFrom(baseSrc, id);
   const mNew = manifestFrom(theirsSrc, id);
   assertKernel(project, mNew);
@@ -552,7 +634,8 @@ export function upgrade(libRoot, project, id, options = {}) {
   const notes = [];
 
   if (entry.dirty) notes.push("installed from uncommitted library changes: the merge base is the commit before them, so expect more conflicts than usual");
-  const report = mergeFiles(project, renderFiles(baseSrc, mBase, goModule, entry.ports), renderFiles(theirsSrc, mNew, goModule, ports));
+  const ownedElsewhere = new Set(Object.entries(lock.modules).filter(([other]) => other !== id).flatMap(([, e]) => Object.keys(e.files ?? {})));
+  const report = mergeFiles(project, renderFiles(baseSrc, mBase, goModule, entry.ports), renderFiles(theirsSrc, mNew, goModule, ports), ownedElsewhere);
 
   // Migrations are forward-only: new ones are added, applied ones are never rewritten.
   const baseMig = renderMigrations(baseSrc, id);
@@ -566,18 +649,38 @@ export function upgrade(libRoot, project, id, options = {}) {
     }
   }
 
-  // Registry lines.
+  // Registry lines: the Go build lines, the Go import, and the web registration may each change.
   const goLines = goRegisterLines(mNew, portExpr);
-  if (mNew.register?.go) {
-    const reg = join(project, "apps/api/internal/modules/registry.go");
-    if (JSON.stringify(goLines) !== JSON.stringify(entry.register?.go ?? [])) {
-      if (!replaceLines(reg, entry.register?.go ?? [], goLines)) {
-        notes.push(`registry.go: ${id}'s lines changed in the library but were edited here — set them by hand to:\n${goLines.map((l) => `\t${l}`).join("\n")}`);
-      }
-    }
-    if (theirsSrc.exists(`modules/${id}/api/infrastructure/queries`)) addSqlcBlock(project, id);
+  const reg = join(project, "apps/api/internal/modules/registry.go");
+  const oldImport = entry.register?.goImport ?? null;
+  const newImport = mNew.register?.go?.import ?? null;
+  if (oldImport !== newImport) {
+    if (oldImport) removeLine(reg, `\t"${goModule}/${oldImport}"\n`);
+    if (newImport) insertSorted(reg, "// elco:imports:begin", "// elco:imports:end", `\t"${goModule}/${newImport}"`);
   }
-  const npm = addNpmDeps(project, mNew.npm_dependencies);
+  const oldGo = entry.register?.go ?? [];
+  if (JSON.stringify(goLines) !== JSON.stringify(oldGo)) {
+    if (oldGo.length === 0) insertBefore(reg, "// elco:modules:end", goLines.map((l) => `\t${l}\n`).join(""));
+    else if (!replaceLines(reg, oldGo, goLines)) {
+      notes.push(`registry.go: ${id}'s lines changed in the library but were edited here — set them by hand to:\n${goLines.map((l) => `\t${l}`).join("\n") || "\t(none: remove them)"}`);
+    }
+  }
+  if (mNew.register?.go && theirsSrc.exists(`modules/${id}/api/infrastructure/queries`)) addSqlcBlock(project, id);
+  const oldWeb = entry.register?.web ?? null;
+  const newWeb = mNew.register?.web ?? null;
+  if (JSON.stringify(oldWeb) !== JSON.stringify(newWeb)) {
+    const webReg = join(project, "apps/web/src/app/modules.ts");
+    if (oldWeb) {
+      removeLine(webReg, `import { ${oldWeb.export} } from "${oldWeb.import}";\n`);
+      removeLine(webReg, `  ${oldWeb.export},\n`);
+    }
+    if (newWeb && !read(webReg).includes(`from "${newWeb.import}"`)) {
+      insertBefore(webReg, "// elco:modules:imports:end", `import { ${newWeb.export} } from "${newWeb.import}";\n`);
+      insertBefore(webReg, "// elco:modules:end", `  ${newWeb.export},\n`);
+    }
+  }
+  const npm = addNpmDeps(project, mNew.npm_dependencies, notes);
+  const go = addGoDeps(project, mNew.go_dependencies, notes);
   const env = addEnv(project, id, mNew.env);
 
   lock.modules[id] = {
@@ -591,7 +694,76 @@ export function upgrade(libRoot, project, id, options = {}) {
     register: { go: goLines, goImport: mNew.register?.go?.import ?? null, web: mNew.register?.web ?? null },
   };
   writeLock(project, lock);
-  return { id, from: entry.version, to: mNew.version, ...report, migrationsAdded: [...fresh.keys()], npm, env, notes };
+  return { id, from: entry.version, to: mNew.version, ...report, migrationsAdded: [...fresh.keys()], npm, go, env, notes };
+}
+
+// --- remove -------------------------------------------------------------------------------
+
+/**
+ * Uninstalls id: its files the project did not change, its registry lines, sqlc block, map row,
+ * and lock entry. Refused while another installed module builds on it (a port wired to it, or
+ * it is a ui kit another module lists). Its migrations and tables stay — data is never dropped
+ * by an uninstall; drop them with a new migration if that is what you want.
+ */
+export function removeModule(libRoot, project, id) {
+  assertProject(project);
+  const lock = readLock(project);
+  const entry = lock.modules[id];
+  if (!entry) throw new Error(`${id} is not installed`);
+  if (entry.status === "detached") throw new Error(`${id} is detached: the project owns it — delete it by hand`);
+  const dependents = [];
+  for (const [other, e] of Object.entries(lock.modules)) {
+    if (other === id) continue;
+    if (Object.values(e.ports ?? {}).includes(id)) dependents.push(`${other} (port wired to ${id})`);
+    let m;
+    try { m = loadManifest(libRoot, other); } catch { continue; }
+    if ((m.ui ?? []).includes(id)) dependents.push(`${other} (builds on the kit ${id})`);
+  }
+  if (dependents.length) throw new Error(`${id} cannot be removed — ${dependents.join(", ")} needs it; remove or rewire those first`);
+
+  const kept = [];
+  const dirs = new Set();
+  for (const [path, hash] of Object.entries(entry.files ?? {})) {
+    const full = join(project, path);
+    if (!existsSync(full)) continue;
+    if (sha(read(full)) !== hash) { kept.push(path); continue; }
+    rmSync(full);
+    for (let d = dirname(path); d.includes("/"); d = dirname(d)) dirs.add(d);
+  }
+  // Remove folders the module's files left empty, deepest first.
+  for (const d of [...dirs].sort((a, b) => b.length - a.length)) {
+    const full = join(project, d);
+    if (existsSync(full) && readdirSync(full).length === 0) rmSync(full, { recursive: true });
+  }
+
+  const goModule = goModulePath(project);
+  const reg = join(project, "apps/api/internal/modules/registry.go");
+  if (entry.register?.goImport && existsSync(reg)) removeLine(reg, `\t"${goModule}/${entry.register.goImport}"\n`);
+  if ((entry.register?.go ?? []).length && existsSync(reg)) {
+    if (!replaceLines(reg, entry.register.go, [])) kept.push("registry.go lines (edited here — remove them by hand)");
+  }
+  if (entry.register?.web) {
+    const webReg = join(project, "apps/web/src/app/modules.ts");
+    removeLine(webReg, `import { ${entry.register.web.export} } from "${entry.register.web.import}";\n`);
+    removeLine(webReg, `  ${entry.register.web.export},\n`);
+  }
+  const sqlc = join(project, "apps/api/sqlc.yaml");
+  if (existsSync(sqlc)) {
+    const base = `internal/modules/${id}/infrastructure`;
+    const text = read(sqlc);
+    const block = new RegExp(`  - engine: "mysql"\\n    schema: "migrations"\\n    queries: "${base}/queries"\\n[\\s\\S]*?out: "${base}/sqlc"\\n`);
+    writeFileSync(sqlc, text.replace(block, ""));
+  }
+  const map = join(project, "knowledge/MODULE_MAP.md");
+  if (existsSync(map)) writeFileSync(map, read(map).replace(new RegExp(`^\\| ${id} \\|.*\\n`, "m"), ""));
+
+  delete lock.modules[id];
+  writeLock(project, lock);
+  return { id, kept, migrations: Object.values(entry.migrations ?? {}), tables: loadManifestSafe(libRoot, id)?.owns_tables ?? [] };
+}
+
+function loadManifestSafe(libRoot, id) {
+  try { return loadManifest(libRoot, id); } catch { return undefined; }
 }
 
 // --- detach -------------------------------------------------------------------------------

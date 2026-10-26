@@ -14,7 +14,7 @@ const data = <T,>(p: Promise<{ data: ApiSuccess<T> }>) => p.then((r) => r.data.d
 
 export const fetchMyPermissions = () => data<{ permissions: string[] }>(httpClient.get(`${BASE}/me`)).then((d) => d.permissions);
 export const fetchCatalog = () => data<Permission[]>(httpClient.get(`${BASE}/permissions`));
-export const fetchRoles = () => data<Role[]>(httpClient.get(`${BASE}/roles`));
+export const fetchRoles = (signal?: AbortSignal) => data<Role[]>(httpClient.get(`${BASE}/roles`, { signal }));
 export const fetchRole = (id: number) => data<Role>(httpClient.get(`${BASE}/roles/${id}`));
 export const createRole = (values: RoleValues) => data<Role>(httpClient.post(`${BASE}/roles`, values));
 export const updateRole = (id: number, values: RoleValues) => data<Role>(httpClient.put(`${BASE}/roles/${id}`, values));

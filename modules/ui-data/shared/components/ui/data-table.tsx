@@ -261,7 +261,7 @@ export function DataTable<T>({
                   tabIndex={onRowClick ? 0 : undefined}
                   aria-label={onRowClick && rowLabel ? rowLabel(row) : undefined}
                   className={cn(
-                    "border-b border-border transition-colors last:border-b-0 hover:bg-background focus-visible:bg-background focus-visible:outline-none",
+                    "border-b border-border transition-colors last:border-b-0 hover:bg-background focus-visible:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
                     isSelected && "bg-accent/60",
                     onRowClick && "cursor-pointer",
                   )}

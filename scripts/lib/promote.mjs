@@ -54,7 +54,9 @@ export function promote(libRoot, project, id, options = {}) {
 
   const copy = (from, rel, to) => {
     let content = read(join(from, rel));
-    if (rel.endsWith(".go") && goModule) content = content.replaceAll(goModule, "__GO_MODULE__");
+    // Only inside import paths: a short module path ("pos") also occurs in ordinary words
+    // ("repository"), which a plain replace would corrupt.
+    if (rel.endsWith(".go") && goModule) content = content.replaceAll(`"${goModule}/`, `"__GO_MODULE__/`);
     mkdirSync(dirname(join(to, rel)), { recursive: true });
     writeFileSync(join(to, rel), content);
   };

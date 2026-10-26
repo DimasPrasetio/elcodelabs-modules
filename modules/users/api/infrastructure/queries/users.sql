@@ -18,7 +18,7 @@ WHERE sqlc.arg(search) = ''
 SELECT COUNT(*) FROM users;
 
 -- name: GetUser :one
-SELECT id, name, email, is_active, created_at, updated_at
+SELECT id, name, email, is_active, created_at, updated_at, password_changed_at
 FROM users
 WHERE id = ?;
 
@@ -40,7 +40,4 @@ VALUES (?, ?, ?, ?);
 UPDATE users SET name = ?, email = ?, is_active = ? WHERE id = ?;
 
 -- name: UpdatePassword :exec
-UPDATE users SET password_hash = ? WHERE id = ?;
-
--- name: DeleteUser :execrows
-DELETE FROM users WHERE id = ?;
+UPDATE users SET password_hash = ?, password_changed_at = ? WHERE id = ?;

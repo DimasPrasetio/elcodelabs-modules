@@ -15,8 +15,13 @@ import (
 	"__GO_MODULE__/internal/shared/response"
 )
 
-// CookieName is the session cookie. HttpOnly: page scripts never see the token.
-const CookieName = "session"
+// Cookie names. HttpOnly: page scripts never see the token. In production the __Host-
+// prefix makes the browser refuse the cookie unless it is Secure, host-only, and Path=/ — so a
+// sibling subdomain cannot plant or overwrite it. Plain-HTTP development keeps a plain name.
+const (
+	CookieName    = "__Host-session"
+	DevCookieName = "session"
+)
 
 type userDTO struct {
 	ID    int64  `json:"id"`
@@ -27,13 +32,15 @@ type userDTO struct {
 type sessionDTO struct {
 	User      userDTO   `json:"user"`
 	ExpiresAt time.Time `json:"expires_at"`
-	// Token is for non-browser clients (Authorization: Bearer). Browsers use the cookie.
-	Token string `json:"token"`
+	// Token is only for non-browser clients that ask for it (return_token) and send it as
+	// Authorization: Bearer. Browsers use the cookie and never see the token.
+	Token string `json:"token,omitempty"`
 }
 
 type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	ReturnToken bool   `json:"return_token"`
 }
 
 // Handler serves /api/v1/auth and implements kernel.Authenticator.
@@ -46,6 +53,23 @@ type Handler struct {
 // production, where nginx terminates TLS.
 func NewHandler(svc *application.Service, secureCookie bool) *Handler {
 	return &Handler{svc: svc, secureCookie: secureCookie}
+}
+
+func (h *Handler) cookieName() string {
+	if h.secureCookie {
+		return CookieName
+	}
+	return DevCookieName
+}
+
+func (h *Handler) setCookie(w http.ResponseWriter, value string, expires time.Time, maxAge int) {
+	http.SetCookie(w, &http.Cookie{
+		Name: h.cookieName(), Value: value, Path: "/", Expires: expires, MaxAge: maxAge,
+		HttpOnly: true, Secure: h.secureCookie,
+		// Lax keeps the cookie off cross-site requests; the kernel refuses cross-site writes from
+		// sibling subdomains (same site) and accepts JSON bodies only.
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 // Routes mounts the auth endpoints.
@@ -61,30 +85,29 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	s, err := h.svc.Login(r.Context(), in.Email, in.Password)
+	s, err := h.svc.Login(r.Context(), in.Email, in.Password, application.Client{IP: request.ClientIP(r), UserAgent: r.UserAgent()})
 	if err != nil {
 		response.Error(w, r, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     CookieName,
-		Value:    s.Token,
-		Path:     "/",
-		Expires:  s.ExpiresAt,
-		HttpOnly: true,
-		Secure:   h.secureCookie,
-		// Lax: the cookie is not sent on cross-site POSTs, which is the CSRF defense for a
-		// same-origin SPA + API.
-		SameSite: http.SameSiteLaxMode,
-	})
-	response.OK(w, "Berhasil masuk", sessionDTO{User: toUserDTO(s.User), ExpiresAt: s.ExpiresAt, Token: s.Token})
+	h.setCookie(w, s.Token, s.ExpiresAt, 0)
+	out := sessionDTO{User: toUserDTO(s.User), ExpiresAt: s.ExpiresAt}
+	if in.ReturnToken {
+		out.Token = s.Token
+	}
+	response.OK(w, "Berhasil masuk", out)
 }
 
+// logout ends the session behind the request's token — the token stops working everywhere,
+// not just in this browser — and clears the cookie.
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{
-		Name: CookieName, Value: "", Path: "/", MaxAge: -1,
-		HttpOnly: true, Secure: h.secureCookie, SameSite: http.SameSiteLaxMode,
-	})
+	if token := h.token(r); token != "" {
+		if err := h.svc.Logout(r.Context(), token); err != nil {
+			response.Error(w, r, err)
+			return
+		}
+	}
+	h.setCookie(w, "", time.Time{}, -1)
 	response.OK(w, "Berhasil keluar", nil)
 }
 
@@ -99,12 +122,7 @@ type userKey struct{}
 // Authorization: Bearer header, and must belong to an active user.
 func (h *Handler) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := bearer(r)
-		if token == "" {
-			if c, err := r.Cookie(CookieName); err == nil {
-				token = c.Value
-			}
-		}
+		token := h.token(r)
 		if token == "" {
 			response.Error(w, r, apperror.Unauthorized("Silakan masuk terlebih dahulu"))
 			return
@@ -122,6 +140,17 @@ func (h *Handler) Require(next http.Handler) http.Handler {
 func (h *Handler) UserID(ctx context.Context) (int64, bool) {
 	u, ok := ctx.Value(userKey{}).(ports.User)
 	return u.ID, ok
+}
+
+// token is the request's session token: Authorization: Bearer, else the session cookie.
+func (h *Handler) token(r *http.Request) string {
+	if t := bearer(r); t != "" {
+		return t
+	}
+	if c, err := r.Cookie(h.cookieName()); err == nil {
+		return c.Value
+	}
+	return ""
 }
 
 func bearer(r *http.Request) string {

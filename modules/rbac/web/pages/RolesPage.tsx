@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { Button } from "@/shared/components/primitives/button";
@@ -7,7 +7,7 @@ import type { DataTableColumn } from "@/shared/components/ui/data-table";
 import { Page } from "@/shared/components/ui/page";
 import { PageHeader } from "@/shared/components/ui/page-header";
 import { StatusBadge } from "@/shared/components/ui/status-badge";
-import { apiErrorMessage } from "@/shared/services/api-error";
+import { useResource } from "@/shared/hooks/use-resource";
 import { RoleFormDialog } from "@/modules/rbac/components/RoleFormDialog";
 import { RBAC_PATHS } from "@/modules/rbac/paths";
 import { fetchRoles } from "@/modules/rbac/services/rbac.service";
@@ -16,26 +16,8 @@ import type { Role } from "@/modules/rbac/types/rbac";
 
 export default function RolesPage() {
   const navigate = useNavigate();
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setRoles(await fetchRoles());
-    } catch (err) {
-      setError(apiErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const { data: roles = [], loading, error, reload: load } = useResource((signal) => fetchRoles(signal), []);
 
   const columns: DataTableColumn<Role>[] = [
     {

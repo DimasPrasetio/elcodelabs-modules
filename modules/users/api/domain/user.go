@@ -17,6 +17,8 @@ type User struct {
 	IsActive  bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// PasswordChangedAt is zero until the password is first changed.
+	PasswordChangedAt time.Time
 }
 
 const (

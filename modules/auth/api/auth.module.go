@@ -11,6 +11,7 @@ import (
 	"__GO_MODULE__/internal/config"
 	"__GO_MODULE__/internal/kernel"
 	"__GO_MODULE__/internal/modules/auth/application"
+	"__GO_MODULE__/internal/modules/auth/infrastructure"
 	"__GO_MODULE__/internal/modules/auth/ports"
 	"__GO_MODULE__/internal/modules/auth/presentation"
 )
@@ -34,7 +35,8 @@ func New(d *kernel.Deps, users ports.UserStore) (*Module, error) {
 	if err != nil || ttl <= 0 {
 		return nil, fmt.Errorf("auth: JWT_EXPIRES_IN must be a duration such as 24h (got %q)", config.Get("JWT_EXPIRES_IN", ""))
 	}
-	svc := application.NewService(users, application.NewTokens(secret, ttl), application.NewLimiter(5, 15*time.Minute))
+	tokens := application.NewTokens(secret, ttl, d.Config.Name)
+	svc := application.NewService(users, infrastructure.NewSessions(d.DB), tokens, application.NewLimiter(15*time.Minute, 50_000))
 	return &Module{handler: presentation.NewHandler(svc, d.Config.IsProduction())}, nil
 }
 

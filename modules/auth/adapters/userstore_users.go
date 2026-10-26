@@ -33,5 +33,5 @@ func (a authUserStore) FindUser(ctx context.Context, id int64) (authports.User, 
 	if err != nil {
 		return authports.User{}, err
 	}
-	return authports.User{ID: u.ID, Name: u.Name, Email: u.Email, IsActive: u.IsActive}, nil
+	return authports.User{ID: u.ID, Name: u.Name, Email: u.Email, IsActive: u.IsActive, PasswordChangedAt: u.PasswordChangedAt}, nil
 }

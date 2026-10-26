@@ -239,8 +239,20 @@ async function full() {
         ok.status === 200 && /HttpOnly/i.test(ok.setCookie ?? "") && /SameSite=Lax/i.test(ok.setCookie ?? ""), ok.body);
       const me = await admin.call("GET", "/api/v1/auth/me");
       expect("me (cookie) → admin", me.status === 200 && me.body.data?.email === "admin@example.com", me.body);
-      const bearer = await fetch(`http://localhost:${port}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${ok.body.data.token}` } });
-      expect("me (Bearer) → 200", bearer.status === 200);
+      expect("a browser sign-in gets no token in the body (cookie only)", ok.body.data?.token === undefined, ok.body);
+      const api1 = await client(port).call("POST", "/api/v1/auth/login", { email: "admin@example.com", password: "admin-pass-123", return_token: true });
+      const token = api1.body.data?.token;
+      const asBearer = (path) => fetch(`http://localhost:${port}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+      expect("me (Bearer, token asked for with return_token) → 200", Boolean(token) && (await asBearer("/api/v1/auth/me")).status === 200, api1.body);
+
+      // Kernel 4: forged cross-site writes are refused whatever the domain layout.
+      const raw = (headers, body = '{"name":"X","email":"x1@example.com","password":"x-pass-1234"}') =>
+        fetch(`http://localhost:${port}/api/v1/users`, { method: "POST", headers: { Cookie: admin.cookie, ...headers }, body });
+      expect("a text/plain body (a form a browser posts cross-site) → 415", (await raw({ "Content-Type": "text/plain" })).status === 415);
+      expect("a write a browser marks same-site (a sibling subdomain) → 403", (await raw({ "Content-Type": "application/json", "Sec-Fetch-Site": "same-site" })).status === 403);
+      expect("a write from a foreign Origin → 403", (await raw({ "Content-Type": "application/json", Origin: "https://evil.example" })).status === 403);
+      const typeErr = await admin.call("POST", "/api/v1/users", { name: 5 });
+      expect("a wrong JSON type → 400 without Go internals", typeErr.status === 400 && !/struct|unmarshal/i.test(typeErr.body.message ?? ""), typeErr.body);
       const created = await admin.call("POST", "/api/v1/users", { name: "Ana", email: "ana@example.com", password: "ana-pass-123" });
       expect("create user → 201", created.status === 201, created.body);
       const dup = await admin.call("POST", "/api/v1/users", { name: "Ana 2", email: "Ana@Example.com", password: "ana-pass-123" });
@@ -249,14 +261,19 @@ async function full() {
       expect("search → 1 result with meta", list.status === 200 && list.body.meta?.total === 1, list.body);
       const adminId = me.body.data.id;
       expect("deactivate self → 409", (await admin.call("PUT", `/api/v1/users/${adminId}`, { name: "Admin", email: "admin@example.com", is_active: false })).status === 409);
-      expect("delete self → 409", (await admin.call("DELETE", `/api/v1/users/${adminId}`)).status === 409);
+      expect("users are never deleted: DELETE /users/{id} is not a route", [404, 405].includes((await admin.call("DELETE", `/api/v1/users/${adminId}`)).status));
 
       const ana = client(port);
       expect("new user signs in", (await ana.call("POST", "/api/v1/auth/login", { email: "ana@example.com", password: "ana-pass-123" })).status === 200);
       const anaId = created.body.data.id;
-      expect("admin deactivates her", (await admin.call("PUT", `/api/v1/users/${anaId}`, { name: "Ana", email: "ana@example.com", is_active: false })).status === 200);
+      const renamed = await admin.call("PUT", `/api/v1/users/${anaId}`, { name: "Ana B", email: "ana@example.com" });
+      expect("a PUT without is_active keeps her active", renamed.status === 200 && renamed.body.data?.is_active === true, renamed.body);
+      expect("her session survives a rename", (await ana.call("GET", "/api/v1/auth/me")).status === 200);
+      expect("admin resets her password", (await admin.call("PUT", `/api/v1/users/${anaId}`, { name: "Ana B", email: "ana@example.com", password: "ana-pass-456" })).status === 200);
+      expect("the password change ends her earlier session → 401", (await ana.call("GET", "/api/v1/auth/me")).status === 401);
+      expect("she signs in with the new password", (await ana.call("POST", "/api/v1/auth/login", { email: "ana@example.com", password: "ana-pass-456" })).status === 200);
+      expect("admin deactivates her", (await admin.call("PUT", `/api/v1/users/${anaId}`, { name: "Ana B", email: "ana@example.com", is_active: false })).status === 200);
       expect("her open session ends on the next request → 401", (await ana.call("GET", "/api/v1/auth/me")).status === 401);
-      expect("admin deletes her → 200", (await admin.call("DELETE", `/api/v1/users/${anaId}`)).status === 200);
 
       // rbac: the bootstrap admin holds Administrator (*); a user without roles holds nothing.
       const perms = await admin.call("GET", "/api/v1/rbac/permissions");
@@ -286,9 +303,29 @@ async function full() {
       expect("the last Administrator keeps the role → 409", (await admin.call("DELETE", `/api/v1/rbac/roles/${adminRole.id}/members/${adminId}`)).status === 409);
       expect("delete the Viewer role → Budi loses access", (await admin.call("DELETE", `/api/v1/rbac/roles/${viewer.body.data.id}`)).status === 200
         && (await b.call("GET", "/api/v1/users")).status === 403);
+
+      // An operator manages users but not administrators; a role manager cannot climb.
+      const operator = await admin.call("POST", "/api/v1/rbac/roles", { name: "Operator", permissions: ["users.read", "users.manage", "rbac.manage"] });
+      await admin.call("POST", `/api/v1/rbac/roles/${operator.body.data.id}/members`, { user_id: budiId });
+      expect("an operator cannot reset the administrator's password → 403",
+        (await b.call("PUT", `/api/v1/users/${adminId}`, { name: "Admin", email: "admin@example.com", password: "taken-over-1" })).status === 403);
+      expect("nor deactivate the administrator → 403",
+        (await b.call("PUT", `/api/v1/users/${adminId}`, { name: "Admin", email: "admin@example.com", is_active: false })).status === 403);
+      const cici = await b.call("POST", "/api/v1/users", { name: "Cici", email: "cici@example.com", password: "cici-pass-123" });
+      expect("but manages people with no more rights than theirs", cici.status === 201
+        && (await b.call("PUT", `/api/v1/users/${cici.body.data.id}`, { name: "Cici K", email: "cici@example.com" })).status === 200, cici.body);
+      expect("rbac.manage cannot make yourself Administrator → 403",
+        (await b.call("POST", `/api/v1/rbac/roles/${adminRole.id}/members`, { user_id: budiId })).status === 403);
+      expect("the administrator still signs in with their own password",
+        (await client(port).call("POST", "/api/v1/auth/login", { email: "admin@example.com", password: "admin-pass-123" })).status === 200);
+      const cookieBefore = admin.cookie;
       const out = await admin.call("POST", "/api/v1/auth/logout");
       expect("logout clears the cookie", out.status === 200 && /Max-Age=0/i.test(out.setCookie ?? ""), out.setCookie);
       expect("after logout → 401", (await admin.call("GET", "/api/v1/auth/me")).status === 401);
+      const copied = await fetch(`http://localhost:${port}/api/v1/auth/me`, { headers: { Cookie: cookieBefore } });
+      expect("a copy of the signed-out cookie no longer works → 401", copied.status === 401);
+      await fetch(`http://localhost:${port}/api/v1/auth/logout`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+      expect("a Bearer token signed out ends too → 401", (await asBearer("/api/v1/auth/me")).status === 401);
       const spa = await fetch(`http://localhost:${port}/users`);
       expect("SPA served for /users (one container)", spa.status === 200 && (await spa.text()).includes('id="root"'));
       expect("unknown API path stays JSON 404", (await admin.call("GET", "/api/v1/nope")).status === 404);
@@ -330,6 +367,16 @@ async function noRbac() {
     expect("any signed-in user may manage users (users.manage, default policy)",
       (await c.call("POST", "/api/v1/users", { name: "Dodi", email: "dodi@example.com", password: "dodi-pass-123" })).status === 201);
     expect("not signed in is still 401", (await client(18094).call("GET", "/api/v1/users")).status === 401);
+    stopApi(api);
+    api = undefined;
+    let refused = "";
+    try {
+      api = await startApi(dir, 18095, { DB_DSN: dsn, APP_ENV: "production", JWT_SECRET: "x".repeat(40), PUBLIC_DIR: "" });
+    } catch (err) {
+      refused = err.message;
+    }
+    expect("in production, declared permissions with no authorization provider refuse to start",
+      refused.includes("no authorization provider"), refused || "started");
   } catch (err) {
     fail(`no-rbac: ${err.message}${api ? `\n${api.output()}` : ""}`);
   } finally {
@@ -343,14 +390,21 @@ async function authAlone() {
   log("\n=== auth-alone: auth with a project-written UserStore, no users module ===");
   const dir = scaffold("auth-alone");
   let api;
+  let db;
+  const name = `elco_testbed_authalone_${Date.now()}`;
   try {
     const goModule = readFileSync(join(dir, "apps/api/go.mod"), "utf8").match(/^module (\S+)/m)[1];
     installModule(LIB, dir, "auth", { ports: { UserStore: { expr: "projectUserStore{}" } } });
     writeFileSync(join(dir, "apps/api/internal/modules/adapter_auth_project.go"),
       readFileSync(join(LIB, "testbed/fixtures/adapter_auth_project.go"), "utf8").replaceAll("__GO_MODULE__", goModule));
-    pass("auth installed with UserStore ← projectUserStore{}");
+    pass("auth installed with UserStore ← projectUserStore{} (written before PasswordChangedAt existed: still compiles)");
     if (!build(dir)) return;
-    api = await startApi(dir, 18092, {});
+    if (!DB_DSN) {
+      skip("auth-alone: API checks against MySQL (auth keeps its sessions) — set TESTBED_DB_DSN");
+      return;
+    }
+    db = parseDsn(DB_DSN);
+    api = await startApi(dir, 18092, { DB_DSN: freshDatabase(dir, db, name) });
     const c = client(18092);
     const ok = await c.call("POST", "/api/v1/auth/login", { email: "fixture@example.com", password: "fixture-pass-123" });
     expect("sign in against the project's own store → 200", ok.status === 200, ok.body);
@@ -358,9 +412,10 @@ async function authAlone() {
     expect("me → the project's user", me.status === 200 && me.body.data?.id === 7, me.body);
     expect("no users module → /api/v1/users is 404", (await c.call("GET", "/api/v1/users")).status === 404);
   } catch (err) {
-    fail(`auth-alone: ${err.message}`);
+    fail(`auth-alone: ${err.message}${api ? `\n${api.output()}` : ""}`);
   } finally {
     stopApi(api);
+    if (db) mysql(db, `DROP DATABASE IF EXISTS ${name};`);
     if (!KEEP) rmSync(dir, { recursive: true, force: true });
   }
 }
@@ -401,17 +456,23 @@ async function lifecycle() {
   const bump = (version) => edit(join(lib, "modules/users/module.json"), /"version": "[^"]+"/.exec(readFileSync(join(lib, "modules/users/module.json"), "utf8"))[0], `"version": "${version}"`);
   try {
     for (const p of ["modules", "themes", "scripts", "docs"]) cpSync(join(LIB, p), join(lib, p), { recursive: true });
+    cpSync(join(LIB, ".gitignore"), join(lib, ".gitignore"));
+    writeFileSync(join(lib, "modules/ui-core/shared/.DS_Store"), "finder junk"); // ignored by git
     g("init", "-q", "-b", "main");
     g("add", "-A");
     g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "library v1");
 
     let r = cli("add", "users");
     expect("add users brings its four ui kits along", r.status === 0 && ["ui-core", "ui-data", "ui-forms", "ui-feedback"].every((k) => r.stdout.includes(`✓ ${k} `)), r.stderr || r.stdout);
+    expect("files git ignores in the library (.DS_Store) never reach the project", !existsSync(join(dir, "apps/web/src/shared/.DS_Store")));
     r = cli("add", "auth");
     expect("add auth without wiring its port is refused, project untouched",
       r.status === 1 && r.stderr.includes("--port UserStore=") && !existsSync(join(dir, "apps/api/internal/modules/auth")), r.stderr);
     r = cli("add", "auth", "--port", "UserStore=users");
     expect("add auth --port UserStore=users", r.status === 0 && r.stdout.includes("Next:"), r.stderr || r.stdout);
+    expect("its Go dependencies are pinned in go.mod", /github\.com\/golang-jwt\/jwt\/v5 v5\./.test(readFileSync(join(dir, "apps/api/go.mod"), "utf8")));
+    expect("module settings reach the production env example",
+      readFileSync(join(dir, "infra/elcodelabs/.env.production.example"), "utf8").includes("USERS_BOOTSTRAP_EMAIL"));
     r = cli("preset", "bingkai-navy");
     expect("preset bingkai-navy", r.status === 0, r.stderr);
     let st = JSON.parse(cli("status", "--json").stdout);
@@ -421,8 +482,8 @@ async function lifecycle() {
     const page = join(dir, "apps/web/src/modules/users/pages/UsersPage.tsx");
     edit(page, "Orang yang bisa masuk ke aplikasi ini.", "Akun staf gudang.");
     edit(join(lib, "modules/users/web/pages/UsersPage.tsx"), 'noun="pengguna"', 'noun="akun"');
-    writeFileSync(join(lib, "modules/users/migrations/002_add_users_phone.up.sql"), "ALTER TABLE users ADD COLUMN phone VARCHAR(30) NULL;\n");
-    writeFileSync(join(lib, "modules/users/migrations/002_add_users_phone.down.sql"), "ALTER TABLE users DROP COLUMN phone;\n");
+    writeFileSync(join(lib, "modules/users/migrations/003_add_users_phone.up.sql"), "ALTER TABLE users ADD COLUMN phone VARCHAR(30) NULL;\n");
+    writeFileSync(join(lib, "modules/users/migrations/003_add_users_phone.down.sql"), "ALTER TABLE users DROP COLUMN phone;\n");
     bump("0.9.0");
     g("add", "-A");
     g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "users 0.2.0");
@@ -447,6 +508,60 @@ async function lifecycle() {
     r = cli("upgrade", "users");
     expect("a clash is reported as a conflict (exit 2) with markers in the file",
       r.status === 2 && readFileSync(page, "utf8").includes("<<<<<<<") && r.stdout.includes("CONFLICTS"), r.stdout);
+
+    // A file moves between two installed kits; upgrading both in lock order (the order that used
+    // to delete it) keeps it, now owned by its new kit.
+    const moved = "shared/components/ui/field-hint.tsx";
+    cpSync(join(lib, "modules/ui-forms", moved), join(lib, "modules/ui-core", moved));
+    rmSync(join(lib, "modules/ui-forms", moved));
+    for (const kit of ["ui-core", "ui-forms"]) {
+      const mf = join(lib, `modules/${kit}/module.json`);
+      const m = JSON.parse(readFileSync(mf, "utf8"));
+      m.version = m.version.replace(/\d+$/, (n) => String(Number(n) + 1));
+      writeFileSync(mf, JSON.stringify(m, null, 2) + "\n");
+    }
+    // In the same release: users renames its web export, and changes a file the project deleted.
+    edit(join(lib, "modules/users/web/module.tsx"), "export const usersModule", "export const peopleModule");
+    edit(join(lib, "modules/users/module.json"), '"export": "usersModule"', '"export": "peopleModule"');
+    const formSheet = "apps/web/src/modules/users/components/UserFormSheet.tsx";
+    rmSync(join(dir, formSheet));
+    writeFileSync(join(lib, "modules/users/web/components/UserFormSheet.tsx"), readFileSync(join(lib, "modules/users/web/components/UserFormSheet.tsx"), "utf8") + "\n// changed in the library\n");
+    bump("0.11.0");
+    g("add", "-A");
+    g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "move field-hint, rename export");
+    r = cli("upgrade", "--all");
+    const lockNow = JSON.parse(readFileSync(join(dir, "modules.lock.json"), "utf8"));
+    expect("a file that moved between modules survives the upgrade, owned by its new module",
+      existsSync(join(dir, "apps/web/src", moved)) && lockNow.modules["ui-core"].files[`apps/web/src/${moved}`] && !lockNow.modules["ui-forms"].files[`apps/web/src/${moved}`], r.stdout + r.stderr);
+    const modulesTs = readFileSync(join(dir, "apps/web/src/app/modules.ts"), "utf8");
+    expect("a changed web registration is rewritten in app/modules.ts",
+      modulesTs.includes('import { peopleModule } from "@/modules/users/module"') && modulesTs.includes("  peopleModule,") && !modulesTs.includes("usersModule"), modulesTs);
+    expect("a file the project deleted stays deleted", !existsSync(join(dir, formSheet)) && r.stdout.includes("deleted here"), r.stdout);
+
+    // The commit a module was installed from is gone: its release tag stands in.
+    const locked = JSON.parse(readFileSync(join(dir, "modules.lock.json"), "utf8"));
+    g("tag", "-a", `users/v${locked.modules.users.version}`, "-m", "release", locked.modules.users.commit);
+    locked.modules.users.commit = "0123456789abcdef0123456789abcdef01234567";
+    writeFileSync(join(dir, "modules.lock.json"), JSON.stringify(locked, null, 2) + "\n");
+    edit(join(lib, "modules/users/README.md"), "# users", "# users\n");
+    edit(join(lib, "modules/users/web/components/UserFormSheet.tsx"), "// changed in the library", "// changed in the library again");
+    bump("0.12.0");
+    g("add", "-A");
+    g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "users 0.12.0");
+    r = cli("upgrade", "users");
+    expect("an upgrade whose base commit is gone uses the release tag", r.status !== 1 && r.stdout.includes("0.12.0"), r.stdout + r.stderr);
+
+    // Uninstalling: refused while needed, clean when not.
+    r = cli("remove", "ui-data");
+    expect("remove refuses a kit another installed module builds on", r.status === 1 && r.stderr.includes("users"), r.stderr);
+    r = cli("add", "ui-gallery");
+    const galleryFile = join(dir, "apps/web/src/modules/ui-gallery/module.tsx");
+    const hadGallery = existsSync(galleryFile);
+    r = cli("remove", "ui-gallery");
+    const after = readFileSync(join(dir, "apps/web/src/app/modules.ts"), "utf8");
+    expect("remove ui-gallery takes its files, registration, and lock entry",
+      hadGallery && r.status === 0 && !existsSync(galleryFile) && !after.includes("uiGalleryModule")
+      && !JSON.parse(readFileSync(join(dir, "modules.lock.json"), "utf8")).modules["ui-gallery"], r.stdout + r.stderr);
 
     r = cli("detach", "auth");
     expect("detach auth", r.status === 0);

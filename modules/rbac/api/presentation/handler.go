@@ -128,7 +128,8 @@ func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	role, err := h.svc.CreateRole(r.Context(), application.RoleInput(in))
+	actor, _ := h.auth.UserID(r.Context())
+	role, err := h.svc.CreateRole(r.Context(), actor, application.RoleInput(in))
 	if err != nil {
 		response.Error(w, r, err)
 		return
@@ -147,7 +148,8 @@ func (h *Handler) updateRole(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	role, err := h.svc.UpdateRole(r.Context(), id, application.RoleInput(in))
+	actor, _ := h.auth.UserID(r.Context())
+	role, err := h.svc.UpdateRole(r.Context(), actor, id, application.RoleInput(in))
 	if err != nil {
 		response.Error(w, r, err)
 		return
@@ -161,7 +163,8 @@ func (h *Handler) deleteRole(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	if err := h.svc.DeleteRole(r.Context(), id); err != nil {
+	actor, _ := h.auth.UserID(r.Context())
+	if err := h.svc.DeleteRole(r.Context(), actor, id); err != nil {
 		response.Error(w, r, err)
 		return
 	}
@@ -197,7 +200,8 @@ func (h *Handler) addMember(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	if err := h.svc.AddMember(r.Context(), id, in.UserID); err != nil {
+	actor, _ := h.auth.UserID(r.Context())
+	if err := h.svc.AddMember(r.Context(), actor, id, in.UserID); err != nil {
 		response.Error(w, r, err)
 		return
 	}
@@ -215,7 +219,8 @@ func (h *Handler) removeMember(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	if err := h.svc.RemoveMember(r.Context(), id, userID); err != nil {
+	actor, _ := h.auth.UserID(r.Context())
+	if err := h.svc.RemoveMember(r.Context(), actor, id, userID); err != nil {
 		response.Error(w, r, err)
 		return
 	}

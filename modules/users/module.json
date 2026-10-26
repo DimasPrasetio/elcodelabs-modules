@@ -1,9 +1,9 @@
 {
   "id": "users",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "kind": "fullstack",
   "title": "Users",
-  "summary": "The people who can sign in: list, search, add, edit, deactivate, delete; first-user bootstrap from env. Offers UserClient; guarded by users.read / users.manage.",
+  "summary": "The people who can sign in: list, search, add, edit, deactivate; first-user bootstrap from env. Offers UserClient; guarded by users.read / users.manage.",
   "when_to_use": [
     "Any app where people sign in with an account the app itself stores."
   ],
@@ -13,7 +13,7 @@
   "stacks": [
     "go"
   ],
-  "requires_kernel": 3,
+  "requires_kernel": 4,
   "provides": {
     "contracts": [
       "UserClient"
@@ -62,14 +62,16 @@
       "GET /api/v1/users",
       "POST /api/v1/users",
       "GET /api/v1/users/{id}",
-      "PUT /api/v1/users/{id}",
-      "DELETE /api/v1/users/{id}"
+      "PUT /api/v1/users/{id}"
     ],
     "web": [
       "/users"
     ]
   },
   "npm_dependencies": {},
+  "go_dependencies": {
+    "golang.org/x/crypto": "v0.58.0"
+  },
   "install": {
     "api": "apps/api/internal/modules/users",
     "web": "apps/web/src/modules/users"

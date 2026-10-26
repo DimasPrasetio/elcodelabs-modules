@@ -52,7 +52,8 @@ architecture.
   ],
 
   "owns_tables": ["users"],
-  "env": [
+  "env": [                            // listed in .env.example and in the production example —
+                                      // required ones as KEY=<required>, which deploy.sh enforces
     { "name": "JWT_SECRET", "required": true, "description": "…" }
   ],
   "routes": {
@@ -60,6 +61,9 @@ architecture.
     "web": ["/login"]
   },
   "npm_dependencies": { "sonner": "^2.0.8" },
+  "go_dependencies": { "github.com/golang-jwt/jwt/v5": "v5.3.1" },
+                                      // every third-party Go module it imports, at the version
+                                      // it was tested with — pinned in the project's go.mod
 
   "install": {                        // folder in the module → path in the project
     "api": "apps/api/internal/modules/auth",

@@ -23,7 +23,7 @@ type Module struct {
 	handler *presentation.Handler
 }
 
-// New builds the module. When nobody holds the Administrator role, it gives it to the user
+// New builds the module. When no active user holds the Administrator role, it gives it to the user
 // with RBAC_BOOTSTRAP_ADMIN_EMAIL (default: USERS_BOOTSTRAP_EMAIL) — so installing rbac never
 // locks everyone out. A failed bootstrap is logged, not fatal; the next start tries again.
 func New(d *kernel.Deps, users ports.UserDirectory) (*Module, error) {
@@ -58,4 +58,9 @@ type authorizer struct{ m *Module }
 func (a authorizer) Can(ctx context.Context, permission string) bool {
 	id, ok := a.m.auth.UserID(ctx)
 	return ok && a.m.svc.Can(ctx, id, permission)
+}
+
+func (a authorizer) Covers(ctx context.Context, target int64) bool {
+	id, ok := a.m.auth.UserID(ctx)
+	return ok && a.m.svc.Covers(ctx, id, target)
 }

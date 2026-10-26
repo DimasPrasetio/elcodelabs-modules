@@ -33,6 +33,12 @@ every module answer from the user's real permissions, reloaded on the `session:c
 
 ## Changes
 
+- **0.3.0** — needs kernel 4. `rbac.manage` is no path to more permissions: creating, editing,
+  or deleting a role, and giving or taking one away, need every permission the role grants (the
+  Administrator role: being an administrator). Implements `Authorizer.Covers`, so modules such as
+  `users` keep operators off administrators' accounts. The bootstrap gives the Administrator role
+  again when no *active* user holds it.
+
 - **0.2.0** — needs kernel 3. Built on the four UI kits (data table, section cards, modal,
   user picker with server search, confirm dialogs, toasts); Indonesian copy, API messages, and
   permission descriptions. Migration 002 translates the Administrator role's description.

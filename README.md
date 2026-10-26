@@ -40,6 +40,7 @@ node $ELCO_MODULES/scripts/module.mjs add ui-core app-shell users
 node $ELCO_MODULES/scripts/module.mjs add auth --port UserStore=users
 node $ELCO_MODULES/scripts/module.mjs status                     # versions, files changed here
 node $ELCO_MODULES/scripts/module.mjs upgrade users              # 3-way merge; exit 2 = conflicts
+node $ELCO_MODULES/scripts/module.mjs remove ui-gallery          # uninstall (tables and data stay)
 node $ELCO_MODULES/scripts/module.mjs detach auth                # the project owns it from now on
 node $ELCO_MODULES/scripts/module.mjs promote invoice --migration <file>   # project module → library
 ```
@@ -106,5 +107,7 @@ and a testbed scenario covers it.
 
 ## Versions
 
-Each module has its own version, tagged `<id>/v<version>` (e.g. `auth/v0.1.0`). A module states
-the minimum kernel version it needs (`requires_kernel`; the current kernel is 3).
+Each module has its own version, tagged `<id>/v<version>` (e.g. `auth/v0.4.0`) by the post-commit
+hook — push with `git push --follow-tags`. A project records the commit it installed from and
+falls back to the tag when that commit is gone. A module states the minimum kernel version it
+needs (`requires_kernel`; the current kernel is 4).

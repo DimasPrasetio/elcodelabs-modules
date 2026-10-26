@@ -11,6 +11,8 @@
 //   preset <id>                  apply a theme preset
 //   status                       installed vs library version, files the project changed
 //   upgrade <id>|preset|--all    3-way merge to the library's version (conflicts marked)
+//   remove <id>                  uninstall (refused while another module needs it); its
+//                                tables and migrations stay
 //   detach <id>                  the project owns the module from now on: never upgraded
 //   promote <id> [--migration <file>]...
 //                                copy a module the project built into the library
@@ -22,7 +24,7 @@ import { dirname, join, resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  applyPreset, assertProject, detach, installModule, libraryIndex, loadManifest, missingKits, readLock, status, upgrade,
+  applyPreset, assertProject, detach, installModule, libraryIndex, loadManifest, missingKits, readLock, removeModule, status, upgrade,
 } from "./lib/install.mjs";
 import { promote } from "./lib/promote.mjs";
 
@@ -60,7 +62,7 @@ const [command, ...args] = opts.positional;
 const out = (s = "") => process.stdout.write(s + "\n");
 
 if (opts.help || !command) {
-  out(readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(1, 21).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+  out(readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(1, 23).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
   process.exit(command ? 0 : 1);
 }
 
@@ -87,7 +89,8 @@ function printUpgrade(r) {
   list("CONFLICTS — resolve the <<<<<<< markers", r.conflicts);
   list("migrations added", r.migrationsAdded);
   list("npm dependencies", r.npm);
-  list("env added to .env.example", r.env);
+  list("go dependencies pinned", r.go);
+  list("env added to .env.example and .env.production.example", r.env);
   list("notes", r.notes);
   if (!r.updated?.length && !r.added?.length && !r.removed?.length && !r.conflicts?.length) out("  nothing to merge");
 }
@@ -135,7 +138,9 @@ try {
         reports.push(r);
         out(`✓ ${id} ${r.version}: ${r.files} files, ${r.migrations} migration(s)${Object.keys(r.ports).length ? `, ports ${JSON.stringify(r.ports)}` : ""}${args.includes(id) ? "" : " (needed by the modules added)"}`);
         for (const t of r.tookOver ?? []) out(`  took over ${t}`);
+        for (const n of r.notes ?? []) out(`  note: ${n}`);
         if (r.dirty) out("  ⚠ installed from uncommitted library changes — commit the library so upgrades have an exact base");
+        else if (!r.pushed) out("  ⚠ the library commit is not pushed — push it (and its tags) so other machines can upgrade this project");
       }
       nextSteps(reports);
       break;
@@ -186,6 +191,18 @@ try {
         process.exit(2);
       }
       out("\nNext: npm install, go mod tidy, npm run sqlc:generate, npm run migrate:up, build and test.");
+      break;
+    }
+    case "remove": {
+      const id = args[0] ?? die("remove <id>");
+      const r = removeModule(LIB, PROJECT, id);
+      out(`✓ ${id} removed`);
+      for (const k of r.kept) out(`  kept (changed here): ${k}`);
+      if (r.migrations.length) {
+        out(`  its migrations stay (${r.migrations.length}) and so do its tables${r.tables.length ? ` (${r.tables.join(", ")})` : ""}: data is never dropped`);
+        out("  by an uninstall — write a new migration that drops them if that is what you want.");
+      }
+      out("Next: npm install, cd apps/api && go mod tidy, npm run sqlc:generate, build and test.");
       break;
     }
     case "detach": {

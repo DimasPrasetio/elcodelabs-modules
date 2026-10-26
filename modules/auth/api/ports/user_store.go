@@ -6,6 +6,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrUserNotFound means no user matches.
@@ -24,6 +25,9 @@ type User struct {
 	Name     string
 	Email    string
 	IsActive bool
+	// PasswordChangedAt ends every session opened before it. A store that does not track it
+	// leaves it zero, and sessions then end only on sign-out, deactivation, or expiry.
+	PasswordChangedAt time.Time
 }
 
 // UserStore finds users for signing in and for the session.

@@ -8,6 +8,7 @@
 //        node scripts/catalog.mjs --check --since <ref> also check versions and migrations against
 //                                                       <ref> (the pre-commit hook and CI do this)
 
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,7 +16,18 @@ import { checkHistory, checkModules } from "./lib/rules.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CHECK = process.argv.includes("--check");
-const SINCE = process.argv.includes("--since") ? process.argv[process.argv.indexOf("--since") + 1] : undefined;
+// --since given empty or as the all-zero "before" of a new branch still checks history: against
+// where this branch left main, else the previous commit.
+const SINCE = (() => {
+  if (!process.argv.includes("--since")) return undefined;
+  const ref = process.argv[process.argv.indexOf("--since") + 1] ?? "";
+  const ok = (r) => r && !/^0+$/.test(r) && spawnSync("git", ["rev-parse", "--verify", "--quiet", `${r}^{commit}`], { cwd: ROOT }).status === 0;
+  if (ok(ref)) return ref;
+  const base = spawnSync("git", ["merge-base", "HEAD", "origin/main"], { cwd: ROOT, encoding: "utf8" }).stdout?.trim();
+  const fallback = ok(base) && base !== spawnSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).stdout.trim() ? base : "HEAD~1";
+  console.warn(`--since ${JSON.stringify(ref)} is not a commit here — checking history against ${fallback}`);
+  return fallback;
+})();
 const KINDS = ["fullstack", "backend", "web", "ui"];
 const problems = [];
 const problem = (where, msg) => problems.push(`${where}: ${msg}`);

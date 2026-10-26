@@ -1,0 +1,3 @@
+#!/bin/sh
+# Tags the versions this commit released (<id>/v<version>). Push with: git push --follow-tags
+exec node scripts/tags.mjs

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { Pencil, Plus, Trash2, UserPlus } from "lucide-react";
+import { useState } from "react";
+import { Pencil, Plus, UserCheck, UserPlus, UserX } from "lucide-react";
 import { Button } from "@/shared/components/primitives/button";
 import { ActionMenu } from "@/shared/components/ui/action-menu";
 import { ConfirmDialog } from "@/shared/components/ui/confirm-dialog";
@@ -12,45 +12,29 @@ import { SearchInput } from "@/shared/components/ui/search-input";
 import { StatusBadge } from "@/shared/components/ui/status-badge";
 import { Toolbar } from "@/shared/components/ui/toolbar";
 import { useCan } from "@/shared/access";
+import { useResource } from "@/shared/hooks/use-resource";
 import { formatDate } from "@/shared/lib/format";
 import { notify } from "@/shared/lib/notify";
-import { apiErrorMessage } from "@/shared/services/api-error";
-import type { PageMeta } from "@/shared/types/api";
 import { UserFormSheet } from "@/modules/users/components/UserFormSheet";
-import { deleteUser, listUsers } from "@/modules/users/services/users.service";
+import { listUsers, setUserActive } from "@/modules/users/services/users.service";
 import type { User } from "@/modules/users/types/user";
 
 export default function UsersPage() {
-  const [rows, setRows] = useState<User[]>([]);
-  const [meta, setMeta] = useState<PageMeta>({ page: 1, limit: 25, total: 0, total_pages: 0 });
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(25);
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<User | undefined>();
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [deleting, setDeleting] = useState<User | undefined>();
+  // People are deactivated, never deleted: records elsewhere keep pointing at them.
+  const [toggling, setToggling] = useState<User | undefined>();
   // Hide what this user may not do; the API refuses it anyway (users.manage).
   const canManage = useCan("users.manage");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await listUsers({ page, limit, q: query });
-      setRows(res.data);
-      setMeta(res.meta);
-    } catch (err) {
-      setError(apiErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [page, limit, query]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  // Only the latest answer counts: typing a new search aborts the request for the old one.
+  const users = useResource((signal) => listUsers({ page, limit, q: query }, signal), [page, limit, query]);
+  const rows = users.data?.data ?? [];
+  const meta = users.data?.meta ?? { page, limit, total: 0, total_pages: 0 };
+  const { loading, error, reload: load } = users;
 
   function openCreate() {
     setEditing(undefined);
@@ -84,7 +68,9 @@ export default function UsersPage() {
           label={`Aksi untuk ${u.name}`}
           items={[
             { key: "edit", label: "Ubah", icon: <Pencil />, onSelect: () => openEdit(u) },
-            { key: "delete", label: "Hapus", icon: <Trash2 />, destructive: true, onSelect: () => setDeleting(u) },
+            u.is_active
+              ? { key: "deactivate", label: "Nonaktifkan", icon: <UserX />, destructive: true, onSelect: () => setToggling(u) }
+              : { key: "activate", label: "Aktifkan", icon: <UserCheck />, onSelect: () => setToggling(u) },
           ]}
         />
       ),
@@ -162,18 +148,23 @@ export default function UsersPage() {
         )}
       </section>
 
-      <UserFormSheet open={sheetOpen} onClose={() => setSheetOpen(false)} user={editing} onSaved={() => void load()} />
+      <UserFormSheet open={sheetOpen} onClose={() => setSheetOpen(false)} user={editing} onSaved={load} />
       <ConfirmDialog
-        open={deleting !== undefined}
-        onOpenChange={(open) => !open && setDeleting(undefined)}
-        title={`Hapus ${deleting?.name ?? "pengguna"}?`}
-        description="Pengguna ini tidak bisa masuk lagi. Tindakan ini tidak dapat dibatalkan."
-        confirmLabel="Hapus"
+        open={toggling !== undefined}
+        onOpenChange={(open) => !open && setToggling(undefined)}
+        tone={toggling?.is_active ? "danger" : "primary"}
+        title={toggling?.is_active ? `Nonaktifkan ${toggling.name}?` : `Aktifkan ${toggling?.name ?? "pengguna"}?`}
+        description={
+          toggling?.is_active
+            ? "Pengguna ini langsung keluar dari semua perangkat dan tidak bisa masuk lagi. Datanya tetap tersimpan, dan akun bisa diaktifkan kembali."
+            : "Pengguna ini bisa masuk lagi dengan kata sandinya."
+        }
+        confirmLabel={toggling?.is_active ? "Nonaktifkan" : "Aktifkan"}
         onConfirm={async () => {
-          if (!deleting) return;
-          await deleteUser(deleting.id);
-          notify.success("Pengguna dihapus");
-          await load();
+          if (!toggling) return;
+          await setUserActive(toggling, !toggling.is_active);
+          notify.success(toggling.is_active ? "Pengguna dinonaktifkan" : "Pengguna diaktifkan");
+          load();
         }}
       />
     </Page>

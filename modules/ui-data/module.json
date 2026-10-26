@@ -1,6 +1,6 @@
 {
   "id": "ui-data",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "kind": "ui",
   "title": "UI data kit",
   "summary": "Lists and tables: DataTable (sort, selection with a bulk-action bar, column chooser, built-in loading/empty/error), Pagination, Toolbar with filter chips, FilterBar, SearchInput (debounced), ActionMenu (⋯), NavTabs.",

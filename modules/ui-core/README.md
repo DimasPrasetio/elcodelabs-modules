@@ -33,6 +33,10 @@ a quiet header on `--background` and rows padded by `--row-py`.
 
 ## Changes
 
+- **0.3.0** — `shared/hooks/use-resource.ts`: `useResource(load, deps)` loads what a page shows,
+  aborts the previous request when its inputs change, and drops late answers, so an old search
+  never replaces a new one. Use it for every list and detail page.
+
 - **0.2.0** — needs kernel 3. Bingkai Navy component design; adds primitives (popover,
   native-select, radio-group, switch, tabs, …) and the components above. `DataTable` and
   pagination moved to `ui-data`, `FormField` to `ui-forms`, `ConfirmDialog` to `ui-feedback` —

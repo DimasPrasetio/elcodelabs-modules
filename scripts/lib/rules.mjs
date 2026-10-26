@@ -8,7 +8,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, normalize, relative } from "node:path";
 
 const TOP_ENTRIES = new Set(["module.json", "README.md", "api", "web", "shared", "migrations", "adapters"]);
 const INSTALL_TARGET = {
@@ -42,6 +42,13 @@ const RAW_COLOR = new RegExp(
 );
 const RAW_HTTP = /\bfetch\(|\baxios\.(?:create|get|post|put|patch|delete|request|head)\(|\bXMLHttpRequest\b/;
 const MIGRATION = /^(\d{3})_[a-z0-9_]+\.(up|down)\.sql$/;
+const WEB_SOURCE = /\.(tsx?|jsx?|mjs|css)$/;
+// Go modules the scaffolded kernel already requires: a module may import them without declaring.
+const KERNEL_GO_DEPS = ["github.com/go-sql-driver/mysql", "github.com/joho/godotenv"];
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Table names a statement reads or writes. "ON UPDATE" / "KEY UPDATE" are clauses, not tables.
+const SQL_TABLE_REFS = /\b(?:FROM|JOIN|INTO|(?<!(?:ON|KEY)\s+)UPDATE|TABLE(?:\s+IF\s+(?:NOT\s+)?EXISTS)?|REFERENCES)\s+`?([A-Za-z_][A-Za-z0-9_]*)`?/gi;
+const SQL_WORDS = new Set(["select", "duplicate", "delete", "update", "insert", "set", "where", "values", "lateral", "dual"]);
 const PROSE_FIELDS = new Set(["title", "summary", "when_to_use", "when_not_to_use", "version"]);
 
 /** Every file under dir, as paths relative to it. */
@@ -76,7 +83,13 @@ export function checkModules(root, modules, problem) {
   const owners = new Map();
   // Which module provides each file under apps/web/src/shared.
   const sharedOwner = new Map();
+  // Who owns each table — exactly one module.
+  const tableOwner = new Map();
   for (const { id, m } of modules) {
+    for (const t of m.owns_tables ?? []) {
+      if (tableOwner.has(t)) problem(`modules/${id}`, `own-tables-only: table "${t}" is also owned by ${tableOwner.get(t)}`);
+      else tableOwner.set(t, id);
+    }
     for (const [folder, target] of Object.entries(m.install ?? {})) {
       for (const f of walk(join(root, "modules", id, folder))) {
         const path = `${target}/${f}`;
@@ -112,6 +125,15 @@ export function checkModules(root, modules, problem) {
       if (existsSync(join(dir, f)) && !m.install?.[f]) problem(at, `install-targets: ${f}/ exists but install has no "${f}"`);
     }
 
+    // Modules are code: every file is UTF-8 text, so hashes, 3-way merges, and reviews work.
+    for (const f of walk(dir)) {
+      const buf = readFileSync(join(dir, f));
+      if (buf.includes(0)) problem(at, `text-only: ${f} is binary — modules hold text only (images and fonts belong in a preset or the project)`);
+    }
+    if (m.register?.go && m.register.go.import !== `internal/modules/${id}`) {
+      problem(at, `install-targets: register.go.import must be internal/modules/${id}`);
+    }
+
     // --- backend -------------------------------------------------------------------------
     if (existsSync(join(dir, "api"))) checkGo(root, id, m, problem);
     if (existsSync(join(dir, "adapters"))) checkAdapters(root, id, m, byId, problem);
@@ -120,13 +142,18 @@ export function checkModules(root, modules, problem) {
     // --- frontend ------------------------------------------------------------------------
     for (const folder of ["web", "shared"]) {
       for (const f of walk(join(dir, folder))) {
-        if (!/\.(tsx?|css)$/.test(f)) continue;
+        if (!WEB_SOURCE.test(f)) continue;
         const src = readFileSync(join(dir, folder, f), "utf8");
         const file = `${folder}/${f}`;
         const line = (re) => src.split("\n").findIndex((l) => re.test(l)) + 1;
         if (RAW_COLOR.test(src)) problem(at, `semantic-colors: ${file}:${line(RAW_COLOR)} uses a raw color — use theme tokens (bg-primary, text-muted-foreground, …)`);
         if (!/\.css$/.test(f) && RAW_HTTP.test(src)) problem(at, `one-http-client: ${file}:${line(RAW_HTTP)} — requests go through @/shared/services/http-client`);
         for (const spec of tsImports(src)) {
+          // A relative import may not climb out of the folder it is installed with.
+          if (spec.startsWith(".") && normalize(join(dirname(f), spec)).startsWith("..")) {
+            problem(at, `no-module-imports: ${file} imports ${spec}, outside ${folder}/ — use @/shared or @/modules/${id}`);
+            continue;
+          }
           const mod = spec.match(/^@\/modules\/([a-z0-9-]+)/)?.[1];
           if (mod && (folder === "shared" || mod !== id)) {
             problem(at, folder === "shared"
@@ -185,7 +212,7 @@ function checkGo(root, id, m, problem) {
     const src = readFileSync(join(api, f), "utf8");
     const layer = f.includes("/") ? f.split("/")[0] : null;
     for (const imp of goImports(src)) {
-      const own = imp.match(new RegExp(`^__GO_MODULE__/internal/modules/${id}(?:/([a-z]+))?`));
+      const own = imp.match(new RegExp(`^__GO_MODULE__/internal/modules/${escapeRe(id)}(?:/([a-z]+)(?:/.*)?)?$`));
       if (own) {
         if (layer && LAYER_FORBIDS[layer]?.includes(own[1])) problem(at, `go-layers: api/${f} (${layer}) imports ${own[1]} — ${layer} may not depend on ${own[1]}`);
         continue;
@@ -194,8 +221,23 @@ function checkGo(root, id, m, problem) {
       else if (imp.startsWith("__GO_MODULE__/") && !GO_PROJECT_ALLOWED.test(imp)) problem(at, `kernel-only: api/${f} imports ${imp.replace("__GO_MODULE__/", "")} — a module builds on kernel, config, and shared only`);
       else if (GO_FORBIDDEN_DEPS.test(imp)) problem(at, `sqlc-not-orm: api/${f} imports ${imp} — data access is database/sql + sqlc`);
       else if (imp === "database/sql" && layer !== "infrastructure") problem(at, `go-layers: api/${f} imports database/sql — only infrastructure/ touches the database`);
+      else if (imp.split("/")[0].includes(".") && !imp.startsWith("__GO_MODULE__/")) {
+        const declared = [...KERNEL_GO_DEPS, ...Object.keys(m.go_dependencies ?? {})].some((d) => imp === d || imp.startsWith(`${d}/`));
+        if (!declared) problem(at, `declared-go-deps: api/${f} imports ${imp} — add its module to "go_dependencies" in module.json with the version it was tested with`);
+      }
     }
     if (/\bos\.(Getenv|LookupEnv|Environ)\(/.test(src)) problem(at, `config-through-kernel: api/${f} reads the environment directly — use config.Get / config.Require`);
+  }
+  // Queries touch only the module's own tables — sqlc sees every table in the project, so this
+  // is the line that keeps a JOIN onto another module's table out.
+  const owned = new Set(m.owns_tables ?? []);
+  for (const f of walk(join(api, "infrastructure", "queries"))) {
+    if (!f.endsWith(".sql")) continue;
+    const sql = readFileSync(join(api, "infrastructure", "queries", f), "utf8").replace(/--.*$/gm, "");
+    for (const [, t] of sql.matchAll(SQL_TABLE_REFS)) {
+      if (SQL_WORDS.has(t.toLowerCase()) || owned.has(t)) continue;
+      problem(at, `own-tables-only: infrastructure/queries/${f} uses "${t}", which is not in owns_tables — ask its owner through a port`);
+    }
   }
 }
 
@@ -240,6 +282,7 @@ function checkMigrations(root, id, m, problem) {
       ...[...sql.matchAll(/\b(?:CREATE|ALTER|DROP|RENAME)\s+TABLE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?`?(\w+)`?/gi)].map((x) => x[1]),
       ...[...sql.matchAll(/\b(?:INSERT\s+INTO|(?<!\bON\s+)UPDATE|DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?)\s+`?(\w+)`?/gi)].map((x) => x[1]),
       ...[...sql.matchAll(/\bREFERENCES\s+`?(\w+)`?/gi)].map((x) => x[1]),
+      ...[...sql.matchAll(/\bINDEX\s+`?\w+`?\s+ON\s+`?(\w+)`?/gi)].map((x) => x[1]),
     ];
     for (const t of new Set(touched)) {
       if (!owned.has(t)) problem(at, `own-tables-only: migrations/${f} touches "${t}", which is not in owns_tables — no cross-module tables or foreign keys`);

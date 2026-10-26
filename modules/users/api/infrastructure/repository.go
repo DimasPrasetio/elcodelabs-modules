@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"golang.org/x/crypto/bcrypt"
@@ -52,7 +53,7 @@ func (r *Repository) Get(ctx context.Context, id int64) (domain.User, error) {
 	if err != nil {
 		return domain.User{}, err
 	}
-	return domain.User{ID: row.ID, Name: row.Name, Email: row.Email, IsActive: row.IsActive, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}, nil
+	return domain.User{ID: row.ID, Name: row.Name, Email: row.Email, IsActive: row.IsActive, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, PasswordChangedAt: row.PasswordChangedAt.Time}, nil
 }
 
 func (r *Repository) GetByEmail(ctx context.Context, email string) (domain.User, error) {
@@ -96,19 +97,8 @@ func (r *Repository) Update(ctx context.Context, u domain.User) error {
 	return nil
 }
 
-func (r *Repository) UpdatePassword(ctx context.Context, id int64, hash string) error {
-	return r.q.UpdatePassword(ctx, sqlc.UpdatePasswordParams{PasswordHash: hash, ID: id})
-}
-
-func (r *Repository) Delete(ctx context.Context, id int64) error {
-	n, err := r.q.DeleteUser(ctx, id)
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return application.ErrNotFound
-	}
-	return nil
+func (r *Repository) UpdatePassword(ctx context.Context, id int64, hash string, at time.Time) error {
+	return r.q.UpdatePassword(ctx, sqlc.UpdatePasswordParams{PasswordHash: hash, PasswordChangedAt: sql.NullTime{Time: at, Valid: true}, ID: id})
 }
 
 // duplicate maps MySQL's duplicate-key error on the email index to ErrEmailTaken.

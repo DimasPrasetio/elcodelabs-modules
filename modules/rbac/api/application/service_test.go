@@ -139,8 +139,24 @@ var catalog = func() []kernel.Permission {
 
 func setup() (*application.Service, *memRepo) {
 	repo := newMemRepo()
-	users := directory{1: {ID: 1, Email: "admin@example.com"}, 2: {ID: 2, Email: "ana@example.com"}}
+	users := directory{
+		1: {ID: 1, Email: "admin@example.com", IsActive: true},
+		2: {ID: 2, Email: "ana@example.com", IsActive: true},
+		3: {ID: 3, Email: "budi@example.com", IsActive: true},
+	}
 	return application.NewService(repo, users, catalog), repo
+}
+
+// admin is the bootstrapped Administrator; tests act as them unless they say otherwise.
+const admin = int64(1)
+
+func setupWithAdmin(t *testing.T) (*application.Service, *memRepo) {
+	t.Helper()
+	svc, repo := setup()
+	if ok, err := svc.Bootstrap(context.Background(), "admin@example.com"); err != nil || !ok {
+		t.Fatalf("bootstrap: %v %v", ok, err)
+	}
+	return svc, repo
 }
 
 func status(t *testing.T, err error) int {
@@ -170,16 +186,16 @@ func TestBootstrapThenAdministratorCanEverything(t *testing.T) {
 }
 
 func TestRoleGrantsItsPermissionsOnly(t *testing.T) {
-	svc, _ := setup()
+	svc, _ := setupWithAdmin(t)
 	ctx := context.Background()
-	role, err := svc.CreateRole(ctx, application.RoleInput{Name: "Viewer", Permissions: []string{"users.read", "users.read"}})
+	role, err := svc.CreateRole(ctx, admin, application.RoleInput{Name: "Viewer", Permissions: []string{"users.read", "users.read"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(role.Permissions) != 1 {
 		t.Fatalf("duplicates must collapse: %v", role.Permissions)
 	}
-	if err := svc.AddMember(ctx, role.ID, 2); err != nil {
+	if err := svc.AddMember(ctx, admin, role.ID, 2); err != nil {
 		t.Fatal(err)
 	}
 	if !svc.Can(ctx, 2, "users.read") || svc.Can(ctx, 2, "users.manage") {
@@ -192,12 +208,12 @@ func TestRoleGrantsItsPermissionsOnly(t *testing.T) {
 }
 
 func TestUnknownPermissionAndReservedNameAreRejected(t *testing.T) {
-	svc, _ := setup()
-	_, err := svc.CreateRole(context.Background(), application.RoleInput{Name: "X", Permissions: []string{"nope.never"}})
+	svc, _ := setupWithAdmin(t)
+	_, err := svc.CreateRole(context.Background(), admin, application.RoleInput{Name: "X", Permissions: []string{"nope.never"}})
 	if status(t, err) != http.StatusUnprocessableEntity {
 		t.Fatal("unknown permission must be a 422")
 	}
-	_, err = svc.CreateRole(context.Background(), application.RoleInput{Name: "administrator"})
+	_, err = svc.CreateRole(context.Background(), admin, application.RoleInput{Name: "administrator"})
 	if status(t, err) != http.StatusUnprocessableEntity {
 		t.Fatal("the Administrator name is reserved")
 	}
@@ -207,26 +223,26 @@ func TestAdministratorRoleIsProtected(t *testing.T) {
 	svc, _ := setup()
 	ctx := context.Background()
 	_, _ = svc.Bootstrap(ctx, "admin@example.com")
-	if _, err := svc.UpdateRole(ctx, 1, application.RoleInput{Name: "Root"}); status(t, err) != http.StatusConflict {
+	if _, err := svc.UpdateRole(ctx, admin, 1, application.RoleInput{Name: "Root"}); status(t, err) != http.StatusConflict {
 		t.Error("Administrator must not change")
 	}
-	if err := svc.DeleteRole(ctx, 1); status(t, err) != http.StatusConflict {
+	if err := svc.DeleteRole(ctx, admin, 1); status(t, err) != http.StatusConflict {
 		t.Error("Administrator must not be deleted")
 	}
-	if err := svc.RemoveMember(ctx, 1, 1); status(t, err) != http.StatusConflict {
+	if err := svc.RemoveMember(ctx, admin, 1, 1); status(t, err) != http.StatusConflict {
 		t.Error("the last Administrator must keep the role")
 	}
 }
 
 func TestChangesApplyImmediately(t *testing.T) {
-	svc, _ := setup()
+	svc, _ := setupWithAdmin(t)
 	ctx := context.Background()
-	role, _ := svc.CreateRole(ctx, application.RoleInput{Name: "Editor", Permissions: []string{"users.manage"}})
-	_ = svc.AddMember(ctx, role.ID, 2)
+	role, _ := svc.CreateRole(ctx, admin, application.RoleInput{Name: "Editor", Permissions: []string{"users.manage"}})
+	_ = svc.AddMember(ctx, admin, role.ID, 2)
 	if !svc.Can(ctx, 2, "users.manage") {
 		t.Fatal("granted")
 	}
-	if err := svc.RemoveMember(ctx, role.ID, 2); err != nil {
+	if err := svc.RemoveMember(ctx, admin, role.ID, 2); err != nil {
 		t.Fatal(err)
 	}
 	if svc.Can(ctx, 2, "users.manage") {
@@ -235,8 +251,78 @@ func TestChangesApplyImmediately(t *testing.T) {
 }
 
 func TestUnknownUserCannotGetARole(t *testing.T) {
-	svc, _ := setup()
-	if err := svc.AddMember(context.Background(), 1, 99); status(t, err) != http.StatusNotFound {
+	svc, _ := setupWithAdmin(t)
+	if err := svc.AddMember(context.Background(), admin, 1, 99); status(t, err) != http.StatusNotFound {
 		t.Fatal("want 404 for a user the directory does not know")
+	}
+}
+
+// A role manager holds rbac.manage and users.read — but not users.manage, and is no administrator.
+func roleManager(t *testing.T, svc *application.Service) int64 {
+	t.Helper()
+	ctx := context.Background()
+	role, err := svc.CreateRole(ctx, admin, application.RoleInput{Name: "Role manager", Permissions: []string{"rbac.manage", "users.read"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AddMember(ctx, admin, role.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+	return 2
+}
+
+func TestRbacManageIsNoPathToMorePermissions(t *testing.T) {
+	svc, _ := setupWithAdmin(t)
+	ctx := context.Background()
+	mgr := roleManager(t, svc)
+	if err := svc.AddMember(ctx, mgr, 1, mgr); status(t, err) != http.StatusForbidden {
+		t.Errorf("making yourself Administrator: want 403, got %v", err)
+	}
+	if _, err := svc.CreateRole(ctx, mgr, application.RoleInput{Name: "Mine", Permissions: []string{"users.manage"}}); status(t, err) != http.StatusForbidden {
+		t.Errorf("a role with a permission you lack: want 403, got %v", err)
+	}
+	editor, _ := svc.CreateRole(ctx, admin, application.RoleInput{Name: "Editor", Permissions: []string{"users.manage"}})
+	if err := svc.AddMember(ctx, mgr, editor.ID, mgr); status(t, err) != http.StatusForbidden {
+		t.Errorf("joining a stronger role: want 403, got %v", err)
+	}
+	if _, err := svc.UpdateRole(ctx, mgr, editor.ID, application.RoleInput{Name: "Editor", Permissions: []string{"users.read"}}); status(t, err) != http.StatusForbidden {
+		t.Errorf("editing a stronger role: want 403, got %v", err)
+	}
+	_ = svc.AddMember(ctx, admin, 1, 3) // a second administrator
+	if err := svc.RemoveMember(ctx, mgr, 1, 3); status(t, err) != http.StatusForbidden {
+		t.Errorf("demoting an administrator: want 403, got %v", err)
+	}
+	if svc.Can(ctx, mgr, "users.manage") {
+		t.Fatal("the role manager gained users.manage")
+	}
+}
+
+func TestCovers(t *testing.T) {
+	svc, _ := setupWithAdmin(t)
+	ctx := context.Background()
+	mgr := roleManager(t, svc)
+	if svc.Covers(ctx, mgr, admin) {
+		t.Error("a role manager must not cover the administrator")
+	}
+	if !svc.Covers(ctx, admin, mgr) {
+		t.Error("the administrator covers everyone")
+	}
+	if !svc.Covers(ctx, mgr, 3) {
+		t.Error("anyone covers a user with no permissions")
+	}
+}
+
+func TestBootstrapReturnsWhenNoActiveAdministratorIsLeft(t *testing.T) {
+	repo := newMemRepo()
+	users := directory{1: {ID: 1, Email: "admin@example.com", IsActive: true}}
+	svc := application.NewService(repo, users, catalog)
+	ctx := context.Background()
+	if ok, _ := svc.Bootstrap(ctx, "admin@example.com"); !ok {
+		t.Fatal("first bootstrap")
+	}
+	delete(users, 1) // the only administrator is gone (removed from the user store)
+	users[2] = ports.User{ID: 2, Email: "new@example.com", IsActive: true}
+	if ok, err := svc.Bootstrap(ctx, "new@example.com"); err != nil || !ok {
+		t.Fatalf("bootstrap must give the role again when no active administrator is left: %v %v", ok, err)
 	}
 }
