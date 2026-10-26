@@ -26,22 +26,67 @@
       "owns_tables": []
     },
     {
+      "id": "audit-log",
+      "version": "0.1.0",
+      "kind": "fullstack",
+      "title": "Audit log",
+      "summary": "The audit trail: fills the kernel's d.Audit, so every module's d.Audit.Record lands in one append-only table (who, what, target, before/after, IP, request ID), kept AUDIT_RETENTION_DAYS; a read-only \"Log aktivitas\" page with filters and details.",
+      "when_to_use": [
+        "Anyone must be able to answer who changed what, and when — back-office, finance, anything with more than one person editing."
+      ],
+      "when_not_to_use": [
+        "Legal-grade, tamper-evident records (signed or hash-chained) — this is an operational trail; records are written right after the change, so a crash in between can lose one."
+      ],
+      "stacks": [
+        "go"
+      ],
+      "requires_kernel": 5,
+      "provides": {
+        "contracts": [],
+        "kernel": [
+          "audit"
+        ]
+      },
+      "permissions": [
+        "audit-log.read"
+      ],
+      "ports": [
+        {
+          "name": "UserDirectory",
+          "required": false,
+          "description": "Name the people in the trail. Without it they show as \"Pengguna #12\".",
+          "adapters": [
+            "users"
+          ]
+        }
+      ],
+      "ui": [
+        "ui-core",
+        "ui-data",
+        "ui-forms",
+        "ui-feedback"
+      ],
+      "owns_tables": [
+        "audit_log"
+      ]
+    },
+    {
       "id": "auth",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "kind": "fullstack",
       "title": "Authentication",
-      "summary": "Email + password sign-in with server-side sessions: JWT in an HttpOnly __Host- cookie (Bearer for non-browser clients on request), login/logout/me, sessions that end on sign-out, deactivation, or a password change, layered sign-in limits (person, address, account), the frontend guard, sign-in page, and user menu. Fills the kernel's d.Auth.",
+      "summary": "Email + password sign-in with server-side sessions (sign-out, deactivation, and a password change end them), layered sign-in limits, change your own password, and forgot-password by email; the frontend guard, sign-in and password pages, and the user menu. Fills the kernel's d.Auth.",
       "when_to_use": [
         "Any app where people sign in with an email and password the app checks itself."
       ],
       "when_not_to_use": [
         "Sign-in only through SSO/OAuth/an identity provider.",
-        "Refresh tokens, password reset, or 2FA are needed now — not in this version (reset needs a mail module)."
+        "Refresh tokens, 2FA, or passwordless sign-in are needed now — not in this version."
       ],
       "stacks": [
         "go"
       ],
-      "requires_kernel": 4,
+      "requires_kernel": 5,
       "provides": {
         "contracts": [],
         "kernel": [
@@ -57,19 +102,113 @@
           "adapters": [
             "users"
           ]
+        },
+        {
+          "name": "PasswordWriter",
+          "required": false,
+          "description": "Replace a user's password once auth has checked who they are — for change-password and forgot-password. Without it both are off.",
+          "adapters": [
+            "users"
+          ]
+        },
+        {
+          "name": "Mailer",
+          "required": false,
+          "description": "Send one email — for the forgot-password link. Without it forgot-password is off.",
+          "adapters": [
+            "mailer"
+          ]
         }
       ],
       "ui": [
         "ui-core",
-        "ui-forms"
+        "ui-forms",
+        "ui-feedback"
       ],
       "owns_tables": [
-        "auth_sessions"
+        "auth_sessions",
+        "auth_password_resets"
+      ]
+    },
+    {
+      "id": "files",
+      "version": "0.1.0",
+      "kind": "fullstack",
+      "title": "Files",
+      "summary": "Stores uploaded files for other modules (FileClient): streamed to DATA_DIR on disk, type decided from the content (no SVG/HTML), size-capped, hashed; deleted files kept 30 days. An administrator's page lists, downloads, and deletes them.",
+      "when_to_use": [
+        "A module needs uploads: a logo, attachments, scanned documents, photos."
+      ],
+      "when_not_to_use": [
+        "Large media (video) or files that must live in object storage/CDN — not in this version.",
+        "Public file hosting: modules serve their own files and decide who may see them."
+      ],
+      "stacks": [
+        "go"
+      ],
+      "requires_kernel": 5,
+      "provides": {
+        "contracts": [
+          "FileClient"
+        ],
+        "kernel": []
+      },
+      "permissions": [
+        "files.read",
+        "files.manage"
+      ],
+      "ports": [],
+      "ui": [
+        "ui-core",
+        "ui-data",
+        "ui-forms",
+        "ui-feedback"
+      ],
+      "owns_tables": [
+        "files"
+      ]
+    },
+    {
+      "id": "mailer",
+      "version": "0.1.0",
+      "kind": "fullstack",
+      "title": "Mailer",
+      "summary": "Sends the app's email: modules queue a message (MailClient) and a background job delivers it over SMTP with retries; an outbox page shows what was sent and what failed. Development without SMTP writes email to the log.",
+      "when_to_use": [
+        "Any module needs to email people: password reset, invitations, notifications, documents."
+      ],
+      "when_not_to_use": [
+        "Bulk or marketing email — use a newsletter service; this sends one message per person, transactionally.",
+        "Attachments or inbound email are needed now — not in this version."
+      ],
+      "stacks": [
+        "go"
+      ],
+      "requires_kernel": 5,
+      "provides": {
+        "contracts": [
+          "MailClient"
+        ],
+        "kernel": []
+      },
+      "permissions": [
+        "mailer.read",
+        "mailer.manage"
+      ],
+      "ports": [],
+      "ui": [
+        "ui-core",
+        "ui-data",
+        "ui-forms",
+        "ui-feedback"
+      ],
+      "owns_tables": [
+        "mail_outbox"
       ]
     },
     {
       "id": "rbac",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "kind": "fullstack",
       "title": "Roles and permissions (RBAC)",
       "summary": "Who may do what: roles hold permissions that modules declare, users hold roles. Fills the kernel's d.Authz; Roles page with a per-module permission editor and members; Administrator role with every permission.",
@@ -84,7 +223,7 @@
       "stacks": [
         "go"
       ],
-      "requires_kernel": 4,
+      "requires_kernel": 5,
       "provides": {
         "contracts": [],
         "kernel": [
@@ -114,6 +253,51 @@
         "roles",
         "role_permissions",
         "user_roles"
+      ]
+    },
+    {
+      "id": "settings",
+      "version": "0.1.0",
+      "kind": "fullstack",
+      "title": "Settings",
+      "summary": "App-wide settings: the company profile (name, legal name, address, NPWP, phone, email, time zone, logo) other modules use on documents (SettingsClient), and a settings page other modules add sections to (slot settings:sections). Every change audited.",
+      "when_to_use": [
+        "The app prints or sends documents with the company's details, or needs one place for app-wide settings."
+      ],
+      "when_not_to_use": [
+        "Several companies (tenants) in one app — this keeps one profile."
+      ],
+      "stacks": [
+        "go"
+      ],
+      "requires_kernel": 5,
+      "provides": {
+        "contracts": [
+          "SettingsClient"
+        ],
+        "kernel": []
+      },
+      "permissions": [
+        "settings.manage"
+      ],
+      "ports": [
+        {
+          "name": "FileStore",
+          "required": false,
+          "description": "Store the uploaded logo. Without it the logo cannot be uploaded; everything else works.",
+          "adapters": [
+            "files"
+          ]
+        }
+      ],
+      "ui": [
+        "ui-core",
+        "ui-data",
+        "ui-forms",
+        "ui-feedback"
+      ],
+      "owns_tables": [
+        "settings"
       ]
     },
     {
@@ -245,10 +429,10 @@
     },
     {
       "id": "users",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "kind": "fullstack",
       "title": "Users",
-      "summary": "The people who can sign in: list, search, add, edit, deactivate; first-user bootstrap from env. Offers UserClient; guarded by users.read / users.manage.",
+      "summary": "The people who can sign in: list, search, add, edit, deactivate; each person's own profile page; first-user bootstrap from env. Offers UserClient (incl. SetPassword for an auth provider); every change audited; guarded by users.read / users.manage.",
       "when_to_use": [
         "Any app where people sign in with an account the app itself stores."
       ],
@@ -258,7 +442,7 @@
       "stacks": [
         "go"
       ],
-      "requires_kernel": 4,
+      "requires_kernel": 5,
       "provides": {
         "contracts": [
           "UserClient"

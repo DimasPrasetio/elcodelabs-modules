@@ -167,6 +167,10 @@ function resolvePorts(m, ports, lock) {
       const adapter = port.adapters?.[choice];
       if (!adapter) throw new Error(`${m.id}: no ready-made ${port.name} adapter for "${choice}" — write one and use --port ${port.name}=expr:<Go expression>`);
       if (!lock.modules[choice]) throw new Error(`${m.id}: port ${port.name} is wired to "${choice}", which is not installed — add it first`);
+      const have = lock.modules[choice].version;
+      if (adapter.requires && semverGt(adapter.requires, have)) {
+        throw new Error(`${m.id}: the ${port.name} adapter for "${choice}" needs ${choice} ${adapter.requires} or newer (installed: ${have}) — upgrade ${choice} first`);
+      }
       expr[port.name] = adapter.expr;
     } else {
       expr[port.name] = choice.expr;
@@ -175,12 +179,15 @@ function resolvePorts(m, ports, lock) {
   return expr;
 }
 
+/** The module's registry lines, each {{port:Name}} replaced by its wiring — nil for an optional
+ * port left unwired (the module turns that feature off). */
 function goRegisterLines(m, portExpr) {
   if (!m.register?.go) return [];
   return [...m.register.go.build, ...m.register.go.routes, ...(m.register.go.after ?? [])].map((line) =>
     line.replace(/\{\{port:(\w+)\}\}/g, (_, name) => {
-      if (!portExpr[name]) throw new Error(`${m.id}: register line needs port ${name}, which is not wired`);
-      return portExpr[name];
+      if (portExpr[name]) return portExpr[name];
+      if ((m.ports ?? []).some((p) => p.name === name && !p.required)) return "nil";
+      throw new Error(`${m.id}: register line needs port ${name}, which is not wired`);
     }));
 }
 
@@ -659,9 +666,16 @@ export function upgrade(libRoot, project, id, options = {}) {
     if (newImport) insertSorted(reg, "// elco:imports:begin", "// elco:imports:end", `\t"${goModule}/${newImport}"`);
   }
   const oldGo = entry.register?.go ?? [];
+  // A port newly wired to a module added after this one: this module's lines must come after
+  // the provider's in the composition root, so they move to the end — unless another module is
+  // wired to this one (then its place is kept, and the order is the project's to fix).
+  const rewired = JSON.stringify(entry.ports ?? {}) !== JSON.stringify(ports);
+  const consumers = Object.entries(lock.modules).filter(([other, e]) => other !== id && Object.values(e.ports ?? {}).includes(id));
   if (JSON.stringify(goLines) !== JSON.stringify(oldGo)) {
     if (oldGo.length === 0) insertBefore(reg, "// elco:modules:end", goLines.map((l) => `\t${l}\n`).join(""));
-    else if (!replaceLines(reg, oldGo, goLines)) {
+    else if (rewired && consumers.length === 0 && replaceLines(reg, oldGo, [])) {
+      insertBefore(reg, "// elco:modules:end", goLines.map((l) => `\t${l}\n`).join(""));
+    } else if (!replaceLines(reg, oldGo, goLines)) {
       notes.push(`registry.go: ${id}'s lines changed in the library but were edited here — set them by hand to:\n${goLines.map((l) => `\t${l}`).join("\n") || "\t(none: remove them)"}`);
     }
   }

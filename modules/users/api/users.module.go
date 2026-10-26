@@ -5,7 +5,9 @@ package users
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"__GO_MODULE__/internal/config"
@@ -33,7 +35,7 @@ func New(d *kernel.Deps) (*Module, error) {
 		kernel.Permission{Name: presentation.PermRead, Module: "users", Description: "Melihat daftar pengguna"},
 		kernel.Permission{Name: presentation.PermManage, Module: "users", Description: "Menambah, mengubah, dan menonaktifkan pengguna"},
 	)
-	svc := application.NewService(infrastructure.NewRepository(d.DB), infrastructure.BcryptHasher{}, d.Authz)
+	svc := application.NewService(infrastructure.NewRepository(d.DB), infrastructure.BcryptHasher{}, d.Authz, d.Audit)
 	m := &Module{svc: svc, handler: presentation.NewHandler(svc, d.Auth, d.Authz)}
 
 	email, password := config.Get("USERS_BOOTSTRAP_EMAIL", ""), config.Get("USERS_BOOTSTRAP_PASSWORD", "")
@@ -86,6 +88,14 @@ func (c client) Search(ctx context.Context, q string, limit int) ([]contracts.Us
 		out[i] = contracts.User{ID: u.ID, Name: u.Name, Email: u.Email, IsActive: u.IsActive}
 	}
 	return out, nil
+}
+
+func (c client) SetPassword(ctx context.Context, id int64, password string) error {
+	err := c.svc.SetPassword(ctx, id, password)
+	if errors.Is(err, application.ErrInvalidPassword) {
+		return fmt.Errorf("%w: %s", contracts.ErrInvalidPassword, strings.TrimPrefix(err.Error(), application.ErrInvalidPassword.Error()+": "))
+	}
+	return contractErr(err)
 }
 
 func (c client) GetCredentialsByEmail(ctx context.Context, email string) (contracts.Credentials, error) {

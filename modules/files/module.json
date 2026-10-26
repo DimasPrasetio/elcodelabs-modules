@@ -1,0 +1,86 @@
+{
+  "id": "files",
+  "version": "0.1.0",
+  "kind": "fullstack",
+  "title": "Files",
+  "summary": "Stores uploaded files for other modules (FileClient): streamed to DATA_DIR on disk, type decided from the content (no SVG/HTML), size-capped, hashed; deleted files kept 30 days. An administrator's page lists, downloads, and deletes them.",
+  "when_to_use": [
+    "A module needs uploads: a logo, attachments, scanned documents, photos."
+  ],
+  "when_not_to_use": [
+    "Large media (video) or files that must live in object storage/CDN — not in this version.",
+    "Public file hosting: modules serve their own files and decide who may see them."
+  ],
+  "stacks": [
+    "go"
+  ],
+  "requires_kernel": 5,
+  "provides": {
+    "contracts": [
+      "FileClient"
+    ],
+    "kernel": []
+  },
+  "ports": [],
+  "ui": [
+    "ui-core",
+    "ui-data",
+    "ui-forms",
+    "ui-feedback"
+  ],
+  "permissions": [
+    {
+      "name": "files.read",
+      "description": "Melihat dan mengunduh semua berkas"
+    },
+    {
+      "name": "files.manage",
+      "description": "Menghapus berkas"
+    }
+  ],
+  "owns_tables": [
+    "files"
+  ],
+  "env": [
+    {
+      "name": "FILES_MAX_BYTES",
+      "required": false,
+      "description": "Largest upload in bytes (default 10485760 = 10 MiB, at most 200 MiB). A module may set a smaller limit for its own uploads."
+    }
+  ],
+  "routes": {
+    "api": [
+      "GET /api/v1/files",
+      "GET /api/v1/files/{id}/download",
+      "DELETE /api/v1/files/{id}"
+    ],
+    "web": [
+      "/files"
+    ]
+  },
+  "npm_dependencies": {},
+  "go_dependencies": {},
+  "install": {
+    "api": "apps/api/internal/modules/files",
+    "web": "apps/web/src/modules/files"
+  },
+  "register": {
+    "go": {
+      "import": "internal/modules/files",
+      "build": [
+        "filesModule, err := files.New(d)",
+        "if err != nil {",
+        "\treturn err",
+        "}"
+      ],
+      "routes": [
+        "filesModule.Routes(mux)"
+      ],
+      "after": []
+    },
+    "web": {
+      "import": "@/modules/files/module",
+      "export": "filesModule"
+    }
+  }
+}

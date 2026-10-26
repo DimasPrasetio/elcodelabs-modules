@@ -1,0 +1,115 @@
+{
+  "id": "mailer",
+  "version": "0.1.0",
+  "kind": "fullstack",
+  "title": "Mailer",
+  "summary": "Sends the app's email: modules queue a message (MailClient) and a background job delivers it over SMTP with retries; an outbox page shows what was sent and what failed. Development without SMTP writes email to the log.",
+  "when_to_use": [
+    "Any module needs to email people: password reset, invitations, notifications, documents."
+  ],
+  "when_not_to_use": [
+    "Bulk or marketing email — use a newsletter service; this sends one message per person, transactionally.",
+    "Attachments or inbound email are needed now — not in this version."
+  ],
+  "stacks": [
+    "go"
+  ],
+  "requires_kernel": 5,
+  "provides": {
+    "contracts": [
+      "MailClient"
+    ],
+    "kernel": []
+  },
+  "ports": [],
+  "ui": [
+    "ui-core",
+    "ui-data",
+    "ui-forms",
+    "ui-feedback"
+  ],
+  "permissions": [
+    {
+      "name": "mailer.read",
+      "description": "Melihat kotak keluar email"
+    },
+    {
+      "name": "mailer.manage",
+      "description": "Mengirim ulang email yang gagal"
+    }
+  ],
+  "owns_tables": [
+    "mail_outbox"
+  ],
+  "env": [
+    {
+      "name": "SMTP_HOST",
+      "required": true,
+      "description": "Mail server (a transactional provider: Brevo, Mailgun, SES, Postmark, …). Empty in development: email is written to the log. Production refuses to start without it."
+    },
+    {
+      "name": "SMTP_PORT",
+      "required": false,
+      "description": "587 (STARTTLS, default) or 465 (TLS)."
+    },
+    {
+      "name": "SMTP_USERNAME",
+      "required": false,
+      "description": "SMTP login, if the server needs one."
+    },
+    {
+      "name": "SMTP_PASSWORD",
+      "required": false,
+      "description": "SMTP password or API key — a secret."
+    },
+    {
+      "name": "SMTP_TLS",
+      "required": false,
+      "description": "starttls (default), tls (port 465), or none (a local test server; refused in production)."
+    },
+    {
+      "name": "MAIL_FROM",
+      "required": true,
+      "description": "Sender address, on a domain with SPF, DKIM, and DMARC records for the provider (e.g. noreply@tokomaju.com)."
+    },
+    {
+      "name": "MAIL_FROM_NAME",
+      "required": false,
+      "description": "Sender name (default: APP_NAME)."
+    }
+  ],
+  "routes": {
+    "api": [
+      "GET /api/v1/mailer/messages",
+      "POST /api/v1/mailer/messages/{id}/retry"
+    ],
+    "web": [
+      "/mailer/outbox"
+    ]
+  },
+  "npm_dependencies": {},
+  "go_dependencies": {},
+  "install": {
+    "api": "apps/api/internal/modules/mailer",
+    "web": "apps/web/src/modules/mailer"
+  },
+  "register": {
+    "go": {
+      "import": "internal/modules/mailer",
+      "build": [
+        "mailerModule, err := mailer.New(d)",
+        "if err != nil {",
+        "\treturn err",
+        "}"
+      ],
+      "routes": [
+        "mailerModule.Routes(mux)"
+      ],
+      "after": []
+    },
+    "web": {
+      "import": "@/modules/mailer/module",
+      "export": "mailerModule"
+    }
+  }
+}

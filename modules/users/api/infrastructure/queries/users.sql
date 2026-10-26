@@ -39,5 +39,8 @@ VALUES (?, ?, ?, ?);
 -- name: UpdateUser :execrows
 UPDATE users SET name = ?, email = ?, is_active = ? WHERE id = ?;
 
+-- name: UpdateUserName :execrows
+UPDATE users SET name = ? WHERE id = ?;
+
 -- name: UpdatePassword :exec
 UPDATE users SET password_hash = ?, password_changed_at = ? WHERE id = ?;

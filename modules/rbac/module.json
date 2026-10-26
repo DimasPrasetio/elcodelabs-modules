@@ -1,6 +1,6 @@
 {
   "id": "rbac",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "kind": "fullstack",
   "title": "Roles and permissions (RBAC)",
   "summary": "Who may do what: roles hold permissions that modules declare, users hold roles. Fills the kernel's d.Authz; Roles page with a per-module permission editor and members; Administrator role with every permission.",
@@ -15,7 +15,7 @@
   "stacks": [
     "go"
   ],
-  "requires_kernel": 4,
+  "requires_kernel": 5,
   "provides": {
     "contracts": [],
     "kernel": [

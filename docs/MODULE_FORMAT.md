@@ -41,8 +41,9 @@ architecture.
       "adapters": {                   // ready-made adapters, keyed by provider module id
         "users": {
           "file": "adapters/userstore_users.go",
-          "expr": "authUserStore{users: usersModule.Client()}"
-        }
+          "expr": "authUserStore{users: usersModule.Client()}",
+          "requires": "0.4.0"         // optional: the oldest provider version the adapter compiles
+        }                             // against — install/upgrade refuse to wire an older one
       }
     }
   ],
@@ -93,7 +94,10 @@ architecture.
 ### Placeholders
 
 - `__GO_MODULE__` in any `.go` file becomes the project's Go module path.
-- `{{port:<Name>}}` in `register.go.build` becomes the adapter expression chosen for that port.
+- `{{port:<Name>}}` in `register.go.build` becomes the adapter expression chosen for that port —
+  `nil` for an optional port (`"required": false`) left unwired, which the module's `New` treats
+  as "this feature is off". A port is optional whenever the module still makes sense without it;
+  adding a required port to a released module breaks every project that has not wired it.
 
 ### Migrations
 

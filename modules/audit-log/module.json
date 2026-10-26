@@ -1,0 +1,94 @@
+{
+  "id": "audit-log",
+  "version": "0.1.0",
+  "kind": "fullstack",
+  "title": "Audit log",
+  "summary": "The audit trail: fills the kernel's d.Audit, so every module's d.Audit.Record lands in one append-only table (who, what, target, before/after, IP, request ID), kept AUDIT_RETENTION_DAYS; a read-only \"Log aktivitas\" page with filters and details.",
+  "when_to_use": [
+    "Anyone must be able to answer who changed what, and when — back-office, finance, anything with more than one person editing."
+  ],
+  "when_not_to_use": [
+    "Legal-grade, tamper-evident records (signed or hash-chained) — this is an operational trail; records are written right after the change, so a crash in between can lose one."
+  ],
+  "stacks": [
+    "go"
+  ],
+  "requires_kernel": 5,
+  "provides": {
+    "contracts": [],
+    "kernel": [
+      "audit"
+    ]
+  },
+  "ports": [
+    {
+      "name": "UserDirectory",
+      "required": false,
+      "description": "Name the people in the trail. Without it they show as \"Pengguna #12\".",
+      "adapters": {
+        "users": {
+          "file": "adapters/userdirectory_users.go",
+          "expr": "auditUserDirectory{users: usersModule.Client()}"
+        }
+      }
+    }
+  ],
+  "ui": [
+    "ui-core",
+    "ui-data",
+    "ui-forms",
+    "ui-feedback"
+  ],
+  "permissions": [
+    {
+      "name": "audit-log.read",
+      "description": "Melihat log aktivitas"
+    }
+  ],
+  "owns_tables": [
+    "audit_log"
+  ],
+  "env": [
+    {
+      "name": "AUDIT_RETENTION_DAYS",
+      "required": false,
+      "description": "How long entries are kept, in days (default 365, at least 30)."
+    }
+  ],
+  "routes": {
+    "api": [
+      "GET /api/v1/audit",
+      "GET /api/v1/audit/modules"
+    ],
+    "web": [
+      "/audit"
+    ]
+  },
+  "npm_dependencies": {},
+  "go_dependencies": {},
+  "install": {
+    "api": "apps/api/internal/modules/audit-log",
+    "web": "apps/web/src/modules/audit-log"
+  },
+  "register": {
+    "go": {
+      "import": "internal/modules/audit-log",
+      "build": [
+        "auditLogModule, err := auditlog.New(d, {{port:UserDirectory}})",
+        "if err != nil {",
+        "\treturn err",
+        "}"
+      ],
+      "routes": [
+        "auditLogModule.Routes(mux)"
+      ],
+      "after": [
+        "d.Audit.Provide(auditLogModule.Sink())"
+      ]
+    },
+    "web": {
+      "import": "@/modules/audit-log/module",
+      "export": "auditLogModule"
+    }
+  }
+}

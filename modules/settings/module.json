@@ -1,0 +1,89 @@
+{
+  "id": "settings",
+  "version": "0.1.0",
+  "kind": "fullstack",
+  "title": "Settings",
+  "summary": "App-wide settings: the company profile (name, legal name, address, NPWP, phone, email, time zone, logo) other modules use on documents (SettingsClient), and a settings page other modules add sections to (slot settings:sections). Every change audited.",
+  "when_to_use": [
+    "The app prints or sends documents with the company's details, or needs one place for app-wide settings."
+  ],
+  "when_not_to_use": [
+    "Several companies (tenants) in one app — this keeps one profile."
+  ],
+  "stacks": [
+    "go"
+  ],
+  "requires_kernel": 5,
+  "provides": {
+    "contracts": [
+      "SettingsClient"
+    ],
+    "kernel": []
+  },
+  "ports": [
+    {
+      "name": "FileStore",
+      "required": false,
+      "description": "Store the uploaded logo. Without it the logo cannot be uploaded; everything else works.",
+      "adapters": {
+        "files": {
+          "file": "adapters/filestore_files.go",
+          "expr": "settingsFileStore{files: filesModule.Client()}"
+        }
+      }
+    }
+  ],
+  "ui": [
+    "ui-core",
+    "ui-data",
+    "ui-forms",
+    "ui-feedback"
+  ],
+  "permissions": [
+    {
+      "name": "settings.manage",
+      "description": "Mengubah pengaturan aplikasi dan profil perusahaan"
+    }
+  ],
+  "owns_tables": [
+    "settings"
+  ],
+  "env": [],
+  "routes": {
+    "api": [
+      "GET /api/v1/settings/company",
+      "PUT /api/v1/settings/company",
+      "PUT /api/v1/settings/company/logo",
+      "DELETE /api/v1/settings/company/logo",
+      "GET /api/v1/settings/company/logo"
+    ],
+    "web": [
+      "/settings"
+    ]
+  },
+  "npm_dependencies": {},
+  "go_dependencies": {},
+  "install": {
+    "api": "apps/api/internal/modules/settings",
+    "web": "apps/web/src/modules/settings"
+  },
+  "register": {
+    "go": {
+      "import": "internal/modules/settings",
+      "build": [
+        "settingsModule, err := settings.New(d, {{port:FileStore}})",
+        "if err != nil {",
+        "\treturn err",
+        "}"
+      ],
+      "routes": [
+        "settingsModule.Routes(mux)"
+      ],
+      "after": []
+    },
+    "web": {
+      "import": "@/modules/settings/module",
+      "export": "settingsModule"
+    }
+  }
+}

@@ -25,3 +25,13 @@ export async function setUserActive(user: User, active: boolean): Promise<User> 
   const { data } = await httpClient.put<ApiSuccess<User>>(`${BASE}/${user.id}`, { name: user.name, email: user.email, is_active: active });
   return data.data;
 }
+
+export async function fetchProfile(signal?: AbortSignal): Promise<User> {
+  const { data } = await httpClient.get<ApiSuccess<User>>("/api/v1/account/profile", { signal });
+  return data.data;
+}
+
+export async function updateProfile(name: string): Promise<User> {
+  const { data } = await httpClient.put<ApiSuccess<User>>("/api/v1/account/profile", { name });
+  return data.data;
+}

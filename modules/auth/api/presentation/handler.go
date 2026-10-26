@@ -77,6 +77,75 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
 	mux.HandleFunc("POST /api/v1/auth/logout", h.logout)
 	mux.Handle("GET /api/v1/auth/me", h.Require(http.HandlerFunc(h.me)))
+	mux.HandleFunc("GET /api/v1/auth/options", h.options)
+	mux.Handle("POST /api/v1/auth/password", h.Require(http.HandlerFunc(h.changePassword)))
+	mux.HandleFunc("POST /api/v1/auth/forgot", h.forgot)
+	mux.HandleFunc("POST /api/v1/auth/reset", h.reset)
+}
+
+func client(r *http.Request) application.Client {
+	return application.Client{IP: request.ClientIP(r), UserAgent: r.UserAgent()}
+}
+
+func (h *Handler) options(w http.ResponseWriter, r *http.Request) {
+	response.OK(w, "Fitur akun", h.svc.Options())
+}
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// changePassword replaces the password and hands this device a fresh session: the others end.
+func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
+	var in changePasswordRequest
+	if err := request.DecodeJSON(w, r, &in); err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	uid, _ := h.UserID(r.Context())
+	s, err := h.svc.ChangePassword(r.Context(), uid, in.CurrentPassword, in.NewPassword, client(r))
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	h.setCookie(w, s.Token, s.ExpiresAt, 0)
+	response.OK(w, "Kata sandi diganti. Perangkat lain sudah dikeluarkan.", sessionDTO{User: toUserDTO(s.User), ExpiresAt: s.ExpiresAt})
+}
+
+type forgotRequest struct {
+	Email string `json:"email"`
+}
+
+func (h *Handler) forgot(w http.ResponseWriter, r *http.Request) {
+	var in forgotRequest
+	if err := request.DecodeJSON(w, r, &in); err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	if err := h.svc.RequestReset(r.Context(), in.Email, client(r)); err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.OK(w, "Jika email itu terdaftar, tautan untuk mengatur ulang kata sandi sudah dikirim. Periksa kotak masuk Anda.", nil)
+}
+
+type resetRequest struct {
+	Token       string `json:"token"`
+	NewPassword string `json:"new_password"`
+}
+
+func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
+	var in resetRequest
+	if err := request.DecodeJSON(w, r, &in); err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	if err := h.svc.ResetPassword(r.Context(), in.Token, in.NewPassword, client(r)); err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.OK(w, "Kata sandi diperbarui. Silakan masuk dengan kata sandi baru.", nil)
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +154,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	s, err := h.svc.Login(r.Context(), in.Email, in.Password, application.Client{IP: request.ClientIP(r), UserAgent: r.UserAgent()})
+	s, err := h.svc.Login(r.Context(), in.Email, in.Password, client(r))
 	if err != nil {
 		response.Error(w, r, err)
 		return

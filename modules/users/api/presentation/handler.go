@@ -67,6 +67,38 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/users/{id}", need(PermRead, h.get))
 	mux.Handle("POST /api/v1/users", need(PermManage, h.create))
 	mux.Handle("PUT /api/v1/users/{id}", need(PermManage, h.update))
+	// The signed-in user's own profile: no permission beyond being signed in.
+	mux.Handle("GET /api/v1/account/profile", h.auth.Require(http.HandlerFunc(h.profile)))
+	mux.Handle("PUT /api/v1/account/profile", h.auth.Require(http.HandlerFunc(h.updateProfile)))
+}
+
+type profileRequest struct {
+	Name string `json:"name"`
+}
+
+func (h *Handler) profile(w http.ResponseWriter, r *http.Request) {
+	id, _ := h.auth.UserID(r.Context())
+	u, err := h.svc.Get(r.Context(), id)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.OK(w, "Profil", toDTO(u))
+}
+
+func (h *Handler) updateProfile(w http.ResponseWriter, r *http.Request) {
+	var in profileRequest
+	if err := request.DecodeJSON(w, r, &in); err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	id, _ := h.auth.UserID(r.Context())
+	u, err := h.svc.UpdateProfile(r.Context(), id, strings.TrimSpace(in.Name))
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.OK(w, "Profil diperbarui", toDTO(u))
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {

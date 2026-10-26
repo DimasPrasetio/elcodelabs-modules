@@ -1,6 +1,6 @@
 import axios from "axios";
 import { create } from "zustand";
-import { emitAppEvent } from "@/shared/app-events";
+import { emitAppEvent, onAppEvent } from "@/shared/app-events";
 import { fetchMe, login, logout } from "@/modules/auth/services/auth.service";
 import type { SessionUser } from "@/modules/auth/services/auth.service";
 import type { LoginFormValues } from "@/modules/auth/schemas/login.schema";
@@ -52,3 +52,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     emitAppEvent("session:changed");
   },
 }));
+
+// The user's own profile changed elsewhere (their name): read it again, quietly.
+onAppEvent("profile:changed", () => {
+  const { status } = useSessionStore.getState();
+  if (status !== "signed-in") return;
+  fetchMe()
+    .then((user) => useSessionStore.setState({ user }))
+    .catch(() => undefined);
+});

@@ -96,11 +96,11 @@ Scenarios:
 
 | Scenario | Proves |
 |---|---|
-| `full` | preset + the four ui kits + app-shell + users + auth + rbac (ports ← users) + ui-gallery build, pass unit tests, migrate with golang-migrate, and work end to end: sign-in, users CRUD, deactivation ending a session, roles and permissions (403 without, granted immediately, Administrator protected), logout, SPA served |
+| `full` | preset + the four ui kits + every module, all ports wired, build, pass unit tests, migrate with golang-migrate, and work end to end against MySQL and an SMTP sink the testbed runs: sign-in and its limits, users and own profile, sessions ended by sign-out / deactivation / password change, cross-site and non-JSON writes refused, roles and permissions (no escalation, administrators protected), change password, forgot password by email (one-time link from `APP_URL`), the outbox, settings and a logo streamed into files (SVG and disguised HTML refused), the audit trail (actors named, no secrets), and two API processes delivering each email exactly once |
 | `no-rbac` | users + auth without rbac: the kernel's default — any signed-in user passes `users.manage` |
-| `auth-alone` | auth runs on a UserStore the project wrote itself — no users module |
+| `auth-alone` | auth runs on a UserStore the project wrote itself — no users module, no mailer: password features report themselves off and the optional ports are `nil` |
 | `users-alone` | users runs without any auth provider; its guarded routes refuse (401) |
-| `lifecycle` | the CLI on a throwaway git copy of the library: add (and a refused add), status, upgrade merging the project's and the library's changes (then the project still builds), a conflicting upgrade, detach, promote (refused when the module imports another or breaks an architecture rule) |
+| `lifecycle` | the CLI on a throwaway git copy of the library: add (and a refused add), status, upgrade merging the project's and the library's changes (then the project still builds), a conflicting upgrade, detach, wiring a port later (the consumer moves after its provider in the registry), remove, release-tag fallback, promote (refused when the module imports another or breaks an architecture rule) |
 
 A new module is done when its README and `module.json` are complete, the catalog check passes,
 and a testbed scenario covers it.

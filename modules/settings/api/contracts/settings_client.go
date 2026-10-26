@@ -1,0 +1,31 @@
+// Package contracts is what the settings module offers other modules (through their own ports
+// and an adapter in the composition root).
+package contracts
+
+import (
+	"context"
+	"errors"
+	"io"
+)
+
+// ErrNoLogo means no logo is set (or the file store is not wired).
+var ErrNoLogo = errors.New("no logo")
+
+// Company is who the app belongs to — for letterheads, invoices, emails.
+type Company struct {
+	Name      string
+	LegalName string
+	Address   string
+	Phone     string
+	Email     string
+	TaxID     string // NPWP
+	Timezone  string // IANA, e.g. "Asia/Jakarta"
+	HasLogo   bool
+}
+
+// SettingsClient reads app-wide settings.
+type SettingsClient interface {
+	Company(ctx context.Context) (Company, error)
+	// Logo opens the company logo (an image) with its content type, or ErrNoLogo.
+	Logo(ctx context.Context) (io.ReadCloser, string, error)
+}

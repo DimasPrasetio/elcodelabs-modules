@@ -19,6 +19,7 @@
 //   --skill defaults to $SKILL_DIR, then ~/.claude/skills/monorepo-elcodelabs.
 
 import { spawn, spawnSync } from "node:child_process";
+import net from "node:net";
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -141,12 +142,80 @@ function expect(label, cond, detail) {
   else fail(`${label}${detail ? ` — ${JSON.stringify(detail)}` : ""}`);
 }
 
+// --- mail (full scenario) ------------------------------------------------------------------
+
+/** The smallest SMTP server that takes every message: the mailer sends to it (SMTP_TLS=none). */
+function smtpSink() {
+  const messages = [];
+  const server = net.createServer((sock) => {
+    let buf = "";
+    let data = null;
+    let rcpt = [];
+    const say = (s) => sock.write(s + "\r\n");
+    say("220 testbed");
+    sock.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      let i;
+      while ((i = buf.indexOf("\r\n")) >= 0) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        if (data !== null) {
+          if (line === ".") {
+            messages.push({ to: rcpt.join(","), raw: data.join("\r\n") });
+            data = null;
+            rcpt = [];
+            say("250 queued");
+          } else data.push(line.startsWith("..") ? line.slice(1) : line);
+          continue;
+        }
+        const cmd = line.toUpperCase();
+        if (cmd.startsWith("EHLO") || cmd.startsWith("HELO")) say("250 testbed");
+        else if (cmd.startsWith("RCPT TO:")) {
+          rcpt.push(line.slice(8).replace(/[<>]/g, "").trim());
+          say("250 ok");
+        } else if (cmd === "DATA") {
+          data = [];
+          say("354 go");
+        } else if (cmd === "QUIT") {
+          say("221 bye");
+          sock.end();
+        } else say("250 ok");
+      }
+    });
+  });
+  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({ port: server.address().port, messages, close: () => server.close() })));
+}
+
+/** Quoted-printable body text, decoded. */
+const qpDecode = (s) => s.replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+
+async function waitFor(fn, ms = 30000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    const v = fn();
+    if (v) return v;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return null;
+}
+
+/** A 1×1 PNG. */
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+
 // --- database (full scenario) ------------------------------------------------------------
 
 function parseDsn(dsn) {
   const m = dsn.match(/^([^:@]*)(?::([^@]*))?@tcp\(([^:)]+)(?::(\d+))?\)\/(.*)$/);
   if (!m) throw new Error(`TESTBED_DB_DSN is not a Go MySQL DSN: ${dsn}`);
   return { user: m[1], pass: m[2] ?? "", host: m[3], port: m[4] ?? "3306" };
+}
+
+/** One value from a query (first column of the first row). */
+function mysqlQuery(db, sql, database) {
+  const args = ["-h", db.host, "-P", db.port, "-u", db.user, ...(db.pass ? [`-p${db.pass}`] : []), "-N", "-B", database];
+  const r = spawnSync("mysql", args, { input: sql, encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`mysql: ${r.stderr}`);
+  return r.stdout.trim().split("\n")[0];
 }
 
 function mysql(db, sqlOrFile, database) {
@@ -187,28 +256,33 @@ function freshDatabase(dir, db, name) {
 // --- scenarios ---------------------------------------------------------------------------
 
 async function full() {
-  log("\n=== full: bingkai-navy + ui kits + app-shell + users + auth + rbac + ui-gallery ===");
+  log("\n=== full: bingkai-navy + ui kits + every module, all ports wired, against MySQL and an SMTP sink ===");
   const dir = scaffold("full");
   try {
     applyPreset(LIB, dir, "bingkai-navy");
     for (const [id, opts] of [
-      ["app-shell"], ["users"],
-      ["auth", { ports: { UserStore: "users" } }],
+      ["app-shell"], ["files"], ["mailer"], ["users"],
+      ["auth", { ports: { UserStore: "users", PasswordWriter: "users", Mailer: "mailer" } }],
       ["rbac", { ports: { UserDirectory: "users" } }],
+      ["settings", { ports: { FileStore: "files" } }],
+      ["audit-log", { ports: { UserDirectory: "users" } }],
       ["ui-gallery"],
     ]) {
       installModule(LIB, dir, id, opts);
     }
-    pass("preset + 4 ui kits + app-shell, users, auth, rbac, ui-gallery installed through the markers");
+    pass("preset + 4 ui kits + app-shell, files, mailer, users, auth, rbac, settings, audit-log, ui-gallery installed through the markers");
     const reg = readFileSync(join(dir, "apps/api/internal/modules/registry.go"), "utf8");
-    expect("registry wires auth's UserStore port to users through an adapter",
-      reg.includes("auth.New(d, authUserStore{users: usersModule.Client()})") && existsSync(join(dir, "apps/api/internal/modules/adapter_auth_userstore.go")));
-    for (const id of ["users", "auth", "rbac"]) {
+    expect("registry wires auth's three ports through adapters",
+      reg.includes("auth.New(d, authUserStore{users: usersModule.Client()}, authPasswordWriter{users: usersModule.Client()}, authMailer{mail: mailerModule.Client()})")
+      && existsSync(join(dir, "apps/api/internal/modules/adapter_auth_userstore.go")) && existsSync(join(dir, "apps/api/internal/modules/adapter_auth_mailer.go")));
+    expect("registry hands d.Audit to audit-log", reg.includes("d.Audit.Provide(auditLogModule.Sink())"));
+    const backendModules = ["users", "auth", "rbac", "files", "mailer", "settings", "audit-log"];
+    for (const id of backendModules) {
       const src = readdirSync(join(dir, `apps/api/internal/modules/${id}`), { recursive: true })
         .filter((f) => f.endsWith(".go"))
         .map((f) => readFileSync(join(dir, `apps/api/internal/modules/${id}`, f), "utf8"))
         .join("\n");
-      const others = ["users", "auth", "rbac"].filter((o) => o !== id);
+      const others = backendModules.filter((o) => o !== id);
       expect(`${id} imports no other module`, others.every((o) => !src.includes(`/internal/modules/${o}`)));
     }
     if (!build(dir)) return;
@@ -220,15 +294,20 @@ async function full() {
     const db = parseDsn(DB_DSN);
     const name = `elco_testbed_${Date.now()}`;
     let api;
+    let api2;
+    const sink = await smtpSink();
     try {
       const dsn = freshDatabase(dir, db, name);
       const port = 18091;
-      api = await startApi(dir, port, {
+      const apiEnv = {
         DB_DSN: dsn,
         USERS_BOOTSTRAP_EMAIL: "admin@example.com",
         USERS_BOOTSTRAP_PASSWORD: "admin-pass-123",
         PUBLIC_DIR: join(dir, "apps/web/dist"),
-      });
+        SMTP_HOST: "127.0.0.1", SMTP_PORT: String(sink.port), SMTP_TLS: "none", MAIL_FROM: "noreply@testbed.test",
+        APP_URL: "http://testbed.test",
+      };
+      api = await startApi(dir, port, apiEnv);
       const admin = client(port);
       expect("readyz 200 with the database", (await admin.call("GET", "/readyz")).status === 200);
       expect("users list without a session → 401", (await admin.call("GET", "/api/v1/users")).status === 401);
@@ -318,6 +397,95 @@ async function full() {
         (await b.call("POST", `/api/v1/rbac/roles/${adminRole.id}/members`, { user_id: budiId })).status === 403);
       expect("the administrator still signs in with their own password",
         (await client(port).call("POST", "/api/v1/auth/login", { email: "admin@example.com", password: "admin-pass-123" })).status === 200);
+// --- kernel 5 and its modules: settings, files, mailer, account, audit ----------------
+      const co = await admin.call("GET", "/api/v1/settings/company");
+      expect("settings: a fresh company profile is empty, in Asia/Jakarta, logo upload on", co.status === 200 && co.body.data?.timezone === "Asia/Jakarta" && co.body.data?.logo_upload === true, co.body);
+      expect("settings: a malformed NPWP → 422 on tax_id", (await admin.call("PUT", "/api/v1/settings/company", { name: "Toko Maju", tax_id: "123" })).body.errors?.[0]?.field === "tax_id");
+      const savedCo = await admin.call("PUT", "/api/v1/settings/company", { name: "Toko Maju", legal_name: "PT Toko Maju", tax_id: "01.234.567.8-901.000", email: "info@tokomaju.test", timezone: "Asia/Jakarta" });
+      expect("settings: the profile saves", savedCo.status === 200 && savedCo.body.data?.name === "Toko Maju", savedCo.body);
+      const uploadLogo = (filename, bytes, type) => {
+        const form = new FormData();
+        form.append("file", new Blob([bytes], { type }), filename);
+        return fetch(`http://localhost:${port}/api/v1/settings/company/logo`, { method: "PUT", headers: { Cookie: admin.cookie }, body: form });
+      };
+      const up = await uploadLogo("logo.png", PNG, "image/png");
+      expect("settings: a PNG logo uploads, streamed into files", up.status === 200 && (await up.json()).data?.has_logo === true);
+      const svg = await uploadLogo("x.svg", Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'), "image/svg+xml");
+      expect("settings: an SVG logo is refused → 422", svg.status === 422);
+      const disguised = await uploadLogo("x.png", Buffer.from("<html><script>alert(1)</script></html>"), "image/png");
+      expect("settings: HTML named .png is refused → 422", disguised.status === 422);
+      const logo = await fetch(`http://localhost:${port}/api/v1/settings/company/logo`);
+      expect("settings: the logo is public, typed by its content, nosniff",
+        logo.status === 200 && logo.headers.get("content-type") === "image/png" && logo.headers.get("x-content-type-options") === "nosniff");
+
+      const fl = await admin.call("GET", "/api/v1/files");
+      const logoFile = fl.body.data?.find((f) => f.owner === "settings");
+      expect("files: the logo is listed with its module, type, and SHA-256", fl.status === 200 && logoFile?.content_type === "image/png" && logoFile?.sha256?.length === 64 && fl.body.data.length === 1, fl.body);
+      const dl = await fetch(`http://localhost:${port}/api/v1/files/${logoFile?.id}/download`, { headers: { Cookie: admin.cookie } });
+      expect("files: a download is an attachment in a sandbox, never rendered",
+        dl.status === 200 && /attachment/.test(dl.headers.get("content-disposition") ?? "") && /sandbox/.test(dl.headers.get("content-security-policy") ?? ""));
+      expect("files: someone without files.read → 403", (await b.call("GET", "/api/v1/files")).status === 403);
+
+      const prof = await admin.call("PUT", "/api/v1/account/profile", { name: "Admin Utama" });
+      expect("users: the signed-in user renames themselves", prof.status === 200 && (await admin.call("GET", "/api/v1/auth/me")).body.data?.name === "Admin Utama", prof.body);
+
+      const opts = await client(port).call("GET", "/api/v1/auth/options");
+      expect("auth: change and reset are on (PasswordWriter and Mailer wired)", opts.body.data?.password_change === true && opts.body.data?.password_reset === true, opts.body);
+      const other = client(port);
+      await other.call("POST", "/api/v1/auth/login", { email: "admin@example.com", password: "admin-pass-123" });
+      expect("auth: a wrong current password → 422", (await admin.call("POST", "/api/v1/auth/password", { current_password: "nope-nope-1", new_password: "admin-pass-456" })).status === 422);
+      const changed = await admin.call("POST", "/api/v1/auth/password", { current_password: "admin-pass-123", new_password: "admin-pass-456" });
+      expect("auth: change password → this device keeps a fresh session", changed.status === 200 && (await admin.call("GET", "/api/v1/auth/me")).status === 200, changed.body);
+      expect("auth: the other device is signed out", (await other.call("GET", "/api/v1/auth/me")).status === 401);
+
+      const sentBefore = sink.messages.length;
+      const forgot = await client(port).call("POST", "/api/v1/auth/forgot", { email: "admin@example.com" });
+      const unknownForgot = await client(port).call("POST", "/api/v1/auth/forgot", { email: "nobody@example.com" });
+      expect("auth: forgot answers the same for a known and an unknown address",
+        forgot.status === 200 && unknownForgot.status === 200 && forgot.body.message === unknownForgot.body.message);
+      const mail = await waitFor(() => sink.messages.slice(sentBefore).find((m) => m.to === "admin@example.com"), 30000);
+      expect("mailer: the reset email arrives over SMTP, sent by the background job", Boolean(mail));
+      const mailText = qpDecode(mail?.raw ?? "");
+      const resetToken = mailText.match(/reset-password#token=([A-Za-z0-9_-]+)/)?.[1];
+      expect("mailer: text + HTML alternatives, the link built from APP_URL",
+        /multipart\/alternative/.test(mailText) && mailText.includes("http://testbed.test/reset-password#token=") && Boolean(resetToken), mailText.slice(0, 600));
+      expect("mailer: nothing was queued for the unknown address", mysqlQuery(db, "SELECT COUNT(*) FROM mail_outbox WHERE to_address = 'nobody@example.com'", name) === "0");
+      const reset = await client(port).call("POST", "/api/v1/auth/reset", { token: decodeURIComponent(resetToken ?? ""), new_password: "admin-pass-789" });
+      expect("auth: the emailed token resets the password", reset.status === 200, reset.body);
+      expect("auth: the reset ended the admin's session", (await admin.call("GET", "/api/v1/auth/me")).status === 401);
+      expect("auth: the token works once", (await client(port).call("POST", "/api/v1/auth/reset", { token: decodeURIComponent(resetToken ?? ""), new_password: "admin-pass-000" })).status === 400);
+      expect("auth: the new password signs in", (await admin.call("POST", "/api/v1/auth/login", { email: "admin@example.com", password: "admin-pass-789" })).status === 200);
+      const ob = await admin.call("GET", "/api/v1/mailer/messages?status=sent");
+      expect("mailer: the outbox lists it as sent", ob.status === 200 && ob.body.data?.some((m) => m.to === "admin@example.com" && m.status === "sent"), ob.body);
+      expect("mailer: a sent message's bodies are cleared — the reset link does not stay in the database",
+        mysqlQuery(db, "SELECT COUNT(*) FROM mail_outbox WHERE status = 'sent' AND (text_body <> '' OR html_body <> '')", name) === "0");
+
+      const au = await admin.call("GET", "/api/v1/audit?limit=100");
+      const actions = new Set((au.body.data ?? []).map((e) => e.action));
+      const wanted = ["auth.signed_in", "auth.sign_in_failed", "user.created", "user.deactivated", "role.created", "role.member_added", "settings.company_updated",
+        "settings.logo_updated", "auth.password_changed", "auth.password_reset_requested", "auth.password_reset", "user.profile_updated"];
+      expect("audit-log: sign-ins, users, roles, settings, and password events are all in the trail", wanted.every((a) => actions.has(a)), wanted.filter((a) => !actions.has(a)));
+      const coEntry = (au.body.data ?? []).find((e) => e.action === "settings.company_updated");
+      expect("audit-log: an entry names its actor and carries IP, request ID, and the change", coEntry?.actor_name === "Admin Utama" && coEntry?.ip && coEntry?.request_id && coEntry?.data?.name?.after === "Toko Maju", coEntry);
+      expect("audit-log: no password ever reaches the trail", !JSON.stringify(au.body).includes("admin-pass"));
+      const bySettings = (await admin.call("GET", "/api/v1/audit?module=settings")).body.data ?? [];
+      expect("audit-log: filtering by module", bySettings.length >= 2 && bySettings.every((e) => e.module === "settings"), bySettings.length);
+      expect("audit-log: someone without audit-log.read → 403", (await b.call("GET", "/api/v1/audit")).status === 403);
+
+      // Two API processes on one database (a deploy's overlap): every email goes out exactly once.
+      api2 = await startApi(dir, 18096, apiEnv);
+      const extra = [];
+      for (let i = 1; i <= 4; i++) {
+        const email = `staf${i}@example.com`;
+        await admin.call("POST", "/api/v1/users", { name: `Staf ${i}`, email, password: "staf-pass-123" });
+        await client(i % 2 ? port : 18096).call("POST", "/api/v1/auth/forgot", { email });
+        extra.push(email);
+      }
+      await waitFor(() => extra.every((e) => sink.messages.some((m) => m.to === e)), 35000);
+      await new Promise((r) => setTimeout(r, 12000)); // one more delivery round on each process
+      const counts = extra.map((e) => sink.messages.filter((m) => m.to === e).length);
+      expect("jobs: with two processes running, each of 4 emails was sent exactly once", counts.every((n) => n === 1), counts);
+
       const cookieBefore = admin.cookie;
       const out = await admin.call("POST", "/api/v1/auth/logout");
       expect("logout clears the cookie", out.status === 200 && /Max-Age=0/i.test(out.setCookie ?? ""), out.setCookie);
@@ -333,6 +501,8 @@ async function full() {
       fail(`full API checks: ${err.message}${api ? `\n${api.output()}` : ""}`);
     } finally {
       stopApi(api);
+      stopApi(api2);
+      sink.close();
       mysql(db, `DROP DATABASE IF EXISTS ${name};`);
     }
   } finally {
@@ -411,6 +581,11 @@ async function authAlone() {
     const me = await c.call("GET", "/api/v1/auth/me");
     expect("me → the project's user", me.status === 200 && me.body.data?.id === 7, me.body);
     expect("no users module → /api/v1/users is 404", (await c.call("GET", "/api/v1/users")).status === 404);
+    const opts = await c.call("GET", "/api/v1/auth/options");
+    expect("without PasswordWriter and Mailer, change and reset are off", opts.body.data?.password_change === false && opts.body.data?.password_reset === false, opts.body);
+    expect("forgot → 501 when nothing can send it", (await c.call("POST", "/api/v1/auth/forgot", { email: "fixture@example.com" })).status === 501);
+    expect("the optional ports are nil in the registry",
+      readFileSync(join(dir, "apps/api/internal/modules/registry.go"), "utf8").includes("auth.New(d, projectUserStore{}, nil, nil)"));
   } catch (err) {
     fail(`auth-alone: ${err.message}${api ? `\n${api.output()}` : ""}`);
   } finally {
@@ -477,6 +652,25 @@ async function lifecycle() {
     expect("preset bingkai-navy", r.status === 0, r.stderr);
     let st = JSON.parse(cli("status", "--json").stdout);
     expect("status: everything managed, nothing changed", st.length === 7 && st.every((s) => s.status === "managed" && !s.modified.length), st);
+
+    // A port wired later to a module added after the consumer: the consumer's registry lines
+    // move after the provider's, or the composition root would not compile.
+    r = cli("add", "mailer");
+    expect("add mailer after auth", r.status === 0, r.stderr || r.stdout);
+    // An adapter that needs a newer provider is refused while the project has an older one.
+    const lockFile = join(dir, "modules.lock.json");
+    const lockText = readFileSync(lockFile, "utf8");
+    const oldLock = JSON.parse(lockText);
+    oldLock.modules.users.version = "0.4.0";
+    writeFileSync(lockFile, JSON.stringify(oldLock, null, 2) + "\n");
+    r = cli("upgrade", "auth", "--port", "PasswordWriter=users");
+    expect("wiring an adapter to a provider older than it needs is refused",
+      r.status !== 0 && r.stderr.includes("needs users 0.5.0 or newer") && readFileSync(lockFile, "utf8") === JSON.stringify(oldLock, null, 2) + "\n", r.stderr || r.stdout);
+    writeFileSync(lockFile, lockText);
+    r = cli("upgrade", "auth", "--port", "Mailer=mailer", "--port", "PasswordWriter=users");
+    const rewired = readFileSync(join(dir, "apps/api/internal/modules/registry.go"), "utf8");
+    expect("wiring auth's Mailer port later moves auth after mailer in the registry",
+      r.status === 0 && rewired.indexOf("auth.New(") > rewired.indexOf("mailer.New(") && rewired.includes("authMailer{mail: mailerModule.Client()}") && !rewired.includes(", nil"), rewired);
 
     // The project customizes a module; the library ships a change elsewhere in the same file.
     const page = join(dir, "apps/web/src/modules/users/pages/UsersPage.tsx");

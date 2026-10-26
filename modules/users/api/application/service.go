@@ -4,18 +4,22 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
+	"__GO_MODULE__/internal/kernel"
 	"__GO_MODULE__/internal/modules/users/domain"
 	"__GO_MODULE__/internal/shared/apperror"
 	"__GO_MODULE__/internal/shared/pagination"
 	"__GO_MODULE__/internal/shared/validator"
 )
 
-// ErrNotFound and ErrEmailTaken are what a Repository reports.
+// ErrNotFound and ErrEmailTaken are what a Repository reports; ErrInvalidPassword is a new
+// password that breaks the rules.
 var (
-	ErrNotFound   = errors.New("user not found")
-	ErrEmailTaken = errors.New("email already in use")
+	ErrNotFound        = errors.New("user not found")
+	ErrEmailTaken      = errors.New("email already in use")
+	ErrInvalidPassword = errors.New("invalid password")
 )
 
 // Credentials is a stored password hash and whether the account may sign in.
@@ -42,7 +46,15 @@ type Repository interface {
 	GetCredentialsByEmail(ctx context.Context, email string) (Credentials, error)
 	Create(ctx context.Context, u NewUser) (int64, error)
 	Update(ctx context.Context, u domain.User) error
+	// UpdateName changes the name alone, so it never writes back anything else it did not read
+	// under a lock (an admin's deactivation or new email in the meantime).
+	UpdateName(ctx context.Context, id int64, name string) error
 	UpdatePassword(ctx context.Context, id int64, hash string, at time.Time) error
+}
+
+// Auditor records changes — the kernel's d.Audit.
+type Auditor interface {
+	Record(ctx context.Context, e kernel.AuditEntry)
 }
 
 // Guard answers whether the signed-in user may act on another user's account — the kernel's
@@ -61,11 +73,14 @@ type Service struct {
 	repo   Repository
 	hasher Hasher
 	guard  Guard
+	audit  Auditor
 }
 
-func NewService(repo Repository, hasher Hasher, guard Guard) *Service {
-	return &Service{repo: repo, hasher: hasher, guard: guard}
+func NewService(repo Repository, hasher Hasher, guard Guard, audit Auditor) *Service {
+	return &Service{repo: repo, hasher: hasher, guard: guard, audit: audit}
 }
+
+func target(id int64) string { return fmt.Sprintf("user:%d", id) }
 
 // CreateInput is what creating a user takes.
 type CreateInput struct {
@@ -109,6 +124,8 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.User, erro
 	if err != nil {
 		return domain.User{}, emailTaken(err)
 	}
+	s.audit.Record(ctx, kernel.AuditEntry{Module: "users", Action: "user.created", Target: target(id), Summary: "Menambah pengguna " + in.Name,
+		Data: map[string]any{"name": in.Name, "email": in.Email, "is_active": in.IsActive}})
 	return s.repo.Get(ctx, id)
 }
 
@@ -135,6 +152,7 @@ func (s *Service) Update(ctx context.Context, actorID, id int64, in UpdateInput)
 	if id != actorID && !s.guard.Covers(ctx, id) {
 		return domain.User{}, apperror.Forbidden("Anda tidak dapat mengubah pengguna yang memiliki hak lebih tinggi")
 	}
+	before := u
 	u.Name, u.Email = in.Name, in.Email
 	if in.IsActive != nil {
 		u.IsActive = *in.IsActive
@@ -143,14 +161,80 @@ func (s *Service) Update(ctx context.Context, actorID, id int64, in UpdateInput)
 		return domain.User{}, emailTaken(notFound(err))
 	}
 	if in.Password != "" {
-		hash, err := s.hasher.Hash(in.Password)
-		if err != nil {
+		if err := s.setPassword(ctx, id, in.Password); err != nil {
 			return domain.User{}, err
 		}
-		// Recording when it changed ends every session opened before (the auth provider checks).
-		if err := s.repo.UpdatePassword(ctx, id, hash, time.Now().UTC()); err != nil {
-			return domain.User{}, err
+	}
+	s.recordUpdate(ctx, before, u, in.Password != "")
+	return s.repo.Get(ctx, id)
+}
+
+// recordUpdate notes what an update changed — the active state in words of its own.
+func (s *Service) recordUpdate(ctx context.Context, before, after domain.User, password bool) {
+	changes := map[string]any{}
+	if before.Name != after.Name {
+		changes["name"] = map[string]any{"before": before.Name, "after": after.Name}
+	}
+	if before.Email != after.Email {
+		changes["email"] = map[string]any{"before": before.Email, "after": after.Email}
+	}
+	if password {
+		changes["password"] = "diganti"
+	}
+	if before.IsActive != after.IsActive {
+		action, summary := "user.deactivated", "Menonaktifkan "+after.Name
+		if after.IsActive {
+			action, summary = "user.activated", "Mengaktifkan "+after.Name
 		}
+		s.audit.Record(ctx, kernel.AuditEntry{Module: "users", Action: action, Target: target(after.ID), Summary: summary})
+	}
+	if len(changes) > 0 {
+		s.audit.Record(ctx, kernel.AuditEntry{Module: "users", Action: "user.updated", Target: target(after.ID), Summary: "Mengubah pengguna " + after.Name, Data: changes})
+	}
+}
+
+func (s *Service) setPassword(ctx context.Context, id int64, password string) error {
+	hash, err := s.hasher.Hash(password)
+	if err != nil {
+		return err
+	}
+	// Recording when it changed ends every session opened before (the auth provider checks).
+	return s.repo.UpdatePassword(ctx, id, hash, time.Now().UTC())
+}
+
+// SetPassword replaces a user's password for an auth provider (the person proved who they
+// are there). An invalid password is ErrInvalidPassword, followed by the rule it breaks.
+func (s *Service) SetPassword(ctx context.Context, id int64, password string) error {
+	var v validator.Validator
+	domain.ValidatePassword(&v, "password", password)
+	if err := v.Err(); err != nil {
+		return fmt.Errorf("%w: %s", ErrInvalidPassword, firstProblem(err))
+	}
+	if _, err := s.repo.Get(ctx, id); err != nil {
+		return err
+	}
+	return s.setPassword(ctx, id, password)
+}
+
+// UpdateProfile changes the signed-in user's own name. Email stays with administrators:
+// changing it oneself would be a way to take an account over.
+func (s *Service) UpdateProfile(ctx context.Context, id int64, name string) (domain.User, error) {
+	var v validator.Validator
+	v.Required("name", name)
+	v.MaxLen("name", name, domain.MaxNameLength)
+	if err := v.Err(); err != nil {
+		return domain.User{}, err
+	}
+	u, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return domain.User{}, notFound(err)
+	}
+	if err := s.repo.UpdateName(ctx, id, name); err != nil {
+		return domain.User{}, notFound(err)
+	}
+	if u.Name != name {
+		s.audit.Record(ctx, kernel.AuditEntry{Module: "users", Action: "user.profile_updated", Target: target(id), Summary: "Mengubah profil sendiri",
+			Data: map[string]any{"name": map[string]any{"before": u.Name, "after": name}}})
 	}
 	return s.repo.Get(ctx, id)
 }
@@ -191,4 +275,14 @@ func emailTaken(err error) error {
 		return apperror.Validation([]validator.FieldError{{Field: "email", Message: "sudah dipakai"}})
 	}
 	return err
+}
+
+// firstProblem is the first field message of a validation error, in words for the person.
+func firstProblem(err error) string {
+	if e, ok := apperror.As(err); ok {
+		if fields, ok := e.Details.([]validator.FieldError); ok && len(fields) > 0 {
+			return fields[0].Message
+		}
+	}
+	return err.Error()
 }

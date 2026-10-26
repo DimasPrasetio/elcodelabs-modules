@@ -1,9 +1,9 @@
 {
   "id": "users",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "kind": "fullstack",
   "title": "Users",
-  "summary": "The people who can sign in: list, search, add, edit, deactivate; first-user bootstrap from env. Offers UserClient; guarded by users.read / users.manage.",
+  "summary": "The people who can sign in: list, search, add, edit, deactivate; each person's own profile page; first-user bootstrap from env. Offers UserClient (incl. SetPassword for an auth provider); every change audited; guarded by users.read / users.manage.",
   "when_to_use": [
     "Any app where people sign in with an account the app itself stores."
   ],
@@ -13,7 +13,7 @@
   "stacks": [
     "go"
   ],
-  "requires_kernel": 4,
+  "requires_kernel": 5,
   "provides": {
     "contracts": [
       "UserClient"
@@ -34,7 +34,7 @@
     },
     {
       "name": "users.manage",
-      "description": "Menambah, mengubah, menonaktifkan, dan menghapus pengguna"
+      "description": "Menambah, mengubah, dan menonaktifkan pengguna"
     }
   ],
   "owns_tables": [
@@ -62,10 +62,13 @@
       "GET /api/v1/users",
       "POST /api/v1/users",
       "GET /api/v1/users/{id}",
-      "PUT /api/v1/users/{id}"
+      "PUT /api/v1/users/{id}",
+      "GET /api/v1/account/profile",
+      "PUT /api/v1/account/profile"
     ],
     "web": [
-      "/users"
+      "/users",
+      "/account"
     ]
   },
   "npm_dependencies": {},

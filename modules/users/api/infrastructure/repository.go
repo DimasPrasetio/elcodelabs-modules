@@ -83,6 +83,19 @@ func (r *Repository) Create(ctx context.Context, u application.NewUser) (int64, 
 	return id, duplicate(err)
 }
 
+func (r *Repository) UpdateName(ctx context.Context, id int64, name string) error {
+	n, err := r.q.UpdateUserName(ctx, sqlc.UpdateUserNameParams{Name: name, ID: id})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		if _, err := r.Get(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Repository) Update(ctx context.Context, u domain.User) error {
 	n, err := r.q.UpdateUser(ctx, sqlc.UpdateUserParams{Name: u.Name, Email: u.Email, IsActive: u.IsActive, ID: u.ID})
 	if err != nil {

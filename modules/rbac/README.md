@@ -33,6 +33,10 @@ every module answer from the user's real permissions, reloaded on the `session:c
 
 ## Changes
 
+- **0.4.0** — needs kernel 5. Role changes and membership are recorded in `d.Audit`
+  (`role.created`, `role.updated` with the before/after permissions, `role.deleted`,
+  `role.member_added`, `role.member_removed`).
+
 - **0.3.0** — needs kernel 4. `rbac.manage` is no path to more permissions: creating, editing,
   or deleting a role, and giving or taking one away, need every permission the role grants (the
   Administrator role: being an administrator). Implements `Authorizer.Covers`, so modules such as

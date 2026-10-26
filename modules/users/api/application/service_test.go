@@ -2,10 +2,14 @@ package application_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	"__GO_MODULE__/internal/kernel"
 	"__GO_MODULE__/internal/modules/users/application"
 	"__GO_MODULE__/internal/modules/users/domain"
 	"__GO_MODULE__/internal/shared/apperror"
@@ -84,6 +88,16 @@ func (m *memRepo) Update(_ context.Context, u domain.User) error {
 	return nil
 }
 
+func (m *memRepo) UpdateName(_ context.Context, id int64, name string) error {
+	u, ok := m.users[id]
+	if !ok {
+		return application.ErrNotFound
+	}
+	u.Name = name
+	m.users[id] = u
+	return nil
+}
+
 func (m *memRepo) UpdatePassword(_ context.Context, id int64, hash string, at time.Time) error {
 	m.hashes[id] = hash
 	u := m.users[id]
@@ -97,12 +111,31 @@ type guard map[int64]bool
 
 func (g guard) Covers(_ context.Context, target int64) bool { return !g[target] }
 
+// audit keeps what was recorded.
+type audit struct{ got []kernel.AuditEntry }
+
+func (a *audit) Record(_ context.Context, e kernel.AuditEntry) { a.got = append(a.got, e) }
+
+func (a *audit) actions() []string {
+	out := make([]string, len(a.got))
+	for i, e := range a.got {
+		out[i] = e.Action
+	}
+	return out
+}
+
 func newService(repo application.Repository, protected ...int64) *application.Service {
+	svc, _ := newAudited(repo, protected...)
+	return svc
+}
+
+func newAudited(repo application.Repository, protected ...int64) (*application.Service, *audit) {
 	g := guard{}
 	for _, id := range protected {
 		g[id] = true
 	}
-	return application.NewService(repo, plainHasher{}, g)
+	a := &audit{}
+	return application.NewService(repo, plainHasher{}, g, a), a
 }
 
 func boolPtr(b bool) *bool { return &b }
@@ -231,5 +264,49 @@ func TestGetMissingIs404(t *testing.T) {
 	_, err := svc.Get(context.Background(), 99)
 	if got := status(t, err); got != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", got)
+	}
+}
+
+func TestSetPasswordForAnAuthProvider(t *testing.T) {
+	repo := newMemRepo()
+	svc := newService(repo)
+	u := create(t, svc, "ana@example.com")
+	if err := svc.SetPassword(context.Background(), u.ID, "short"); !errors.Is(err, application.ErrInvalidPassword) || err.Error() != "invalid password: minimal 8 karakter" {
+		t.Fatalf("a short password must be refused with the rule it breaks, got %v", err)
+	}
+	if err := svc.SetPassword(context.Background(), u.ID, "new-secret-1"); err != nil {
+		t.Fatal(err)
+	}
+	if repo.hashes[u.ID] != "hash:new-secret-1" || repo.users[u.ID].PasswordChangedAt.IsZero() {
+		t.Fatal("password not replaced, or its change not recorded")
+	}
+}
+
+func TestOwnProfileChangesTheNameOnly(t *testing.T) {
+	repo := newMemRepo()
+	svc := newService(repo)
+	u := create(t, svc, "ana@example.com")
+	got, err := svc.UpdateProfile(context.Background(), u.ID, "Ana Baru")
+	if err != nil || got.Name != "Ana Baru" || got.Email != "ana@example.com" {
+		t.Fatalf("profile: %+v %v", got, err)
+	}
+	if _, err := svc.UpdateProfile(context.Background(), u.ID, ""); status(t, err) != http.StatusUnprocessableEntity {
+		t.Fatal("an empty name must be refused")
+	}
+}
+
+func TestChangesAreAudited(t *testing.T) {
+	repo := newMemRepo()
+	svc, a := newAudited(repo)
+	u := create(t, svc, "ana@example.com")
+	_, _ = svc.Update(context.Background(), 99, u.ID, application.UpdateInput{Name: "Ana", Email: u.Email, Password: "new-secret-1", IsActive: boolPtr(false)})
+	got := strings.Join(a.actions(), ",")
+	if got != "user.created,user.deactivated,user.updated" {
+		t.Fatalf("audit = %s", got)
+	}
+	for _, e := range a.got {
+		if strings.Contains(fmt.Sprint(e.Data), "new-secret-1") {
+			t.Fatal("a password reached the audit trail")
+		}
 	}
 }

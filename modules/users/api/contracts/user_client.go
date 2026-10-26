@@ -11,6 +11,9 @@ import (
 // ErrNotFound means no user matches.
 var ErrNotFound = errors.New("user not found")
 
+// ErrInvalidPassword means a new password breaks the rules (8–72 bytes); its text says how.
+var ErrInvalidPassword = errors.New("invalid password")
+
 // User is a user's public profile.
 type User struct {
 	ID       int64
@@ -38,4 +41,8 @@ type UserClient interface {
 	Search(ctx context.Context, q string, limit int) ([]User, error)
 	// GetCredentialsByEmail returns the credentials for email (case-insensitive), or ErrNotFound.
 	GetCredentialsByEmail(ctx context.Context, email string) (Credentials, error)
+	// SetPassword replaces the user's password and records when (PasswordChangedAt), which ends
+	// their earlier sessions. For an auth provider's "change my password" and "reset by email";
+	// the caller has already proved who the person is.
+	SetPassword(ctx context.Context, id int64, password string) error
 }

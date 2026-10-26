@@ -5,6 +5,7 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -49,6 +50,7 @@ type Service struct {
 	repo    Repository
 	users   ports.UserDirectory
 	catalog func() []kernel.Permission
+	audit   Auditor
 	ttl     time.Duration
 	now     func() time.Time
 
@@ -61,10 +63,17 @@ type cached struct {
 	until   time.Time
 }
 
-// NewService returns the service. catalog lists every permission modules declared.
-func NewService(repo Repository, users ports.UserDirectory, catalog func() []kernel.Permission) *Service {
-	return &Service{repo: repo, users: users, catalog: catalog, ttl: 30 * time.Second, now: time.Now, cache: map[int64]cached{}}
+// Auditor records changes to roles and members — the kernel's d.Audit.
+type Auditor interface {
+	Record(ctx context.Context, e kernel.AuditEntry)
 }
+
+// NewService returns the service. catalog lists every permission modules declared.
+func NewService(repo Repository, users ports.UserDirectory, catalog func() []kernel.Permission, audit Auditor) *Service {
+	return &Service{repo: repo, users: users, catalog: catalog, audit: audit, ttl: 30 * time.Second, now: time.Now, cache: map[int64]cached{}}
+}
+
+func roleTarget(id int64) string { return fmt.Sprintf("role:%d", id) }
 
 // Catalog is every permission that can be granted.
 func (s *Service) Catalog() []kernel.Permission { return s.catalog() }
@@ -164,6 +173,8 @@ func (s *Service) CreateRole(ctx context.Context, actor int64, in RoleInput) (do
 		return domain.Role{}, nameTaken(err)
 	}
 	s.invalidate()
+	s.audit.Record(ctx, kernel.AuditEntry{Module: "rbac", Action: "role.created", Target: roleTarget(id), Summary: "Membuat peran " + in.Name,
+		Data: map[string]any{"permissions": in.Permissions}})
 	return s.repo.GetRole(ctx, id)
 }
 
@@ -185,6 +196,8 @@ func (s *Service) UpdateRole(ctx context.Context, actor, id int64, in RoleInput)
 		return domain.Role{}, nameTaken(notFound(err))
 	}
 	s.invalidate()
+	s.audit.Record(ctx, kernel.AuditEntry{Module: "rbac", Action: "role.updated", Target: roleTarget(id), Summary: "Mengubah peran " + in.Name,
+		Data: map[string]any{"name": map[string]any{"before": current.Name, "after": in.Name}, "permissions": map[string]any{"before": current.Permissions, "after": in.Permissions}}})
 	return s.repo.GetRole(ctx, id)
 }
 
@@ -203,6 +216,8 @@ func (s *Service) DeleteRole(ctx context.Context, actor, id int64) error {
 		return notFound(err)
 	}
 	s.invalidate()
+	s.audit.Record(ctx, kernel.AuditEntry{Module: "rbac", Action: "role.deleted", Target: roleTarget(id), Summary: "Menghapus peran " + r.Name,
+		Data: map[string]any{"permissions": r.Permissions}})
 	return nil
 }
 
@@ -249,6 +264,8 @@ func (s *Service) AddMember(ctx context.Context, actor, roleID, userID int64) er
 		return err
 	}
 	s.invalidate()
+	s.audit.Record(ctx, kernel.AuditEntry{Module: "rbac", Action: "role.member_added", Target: fmt.Sprintf("user:%d", userID), Summary: "Memberi peran " + r.Name,
+		Data: map[string]any{"role_id": roleID, "role": r.Name}})
 	return nil
 }
 
@@ -275,6 +292,8 @@ func (s *Service) RemoveMember(ctx context.Context, actor, roleID, userID int64)
 		return notFound(err)
 	}
 	s.invalidate()
+	s.audit.Record(ctx, kernel.AuditEntry{Module: "rbac", Action: "role.member_removed", Target: fmt.Sprintf("user:%d", userID), Summary: "Mencabut peran " + r.Name,
+		Data: map[string]any{"role_id": roleID, "role": r.Name}})
 	return nil
 }
 

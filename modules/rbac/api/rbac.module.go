@@ -28,7 +28,7 @@ type Module struct {
 // locks everyone out. A failed bootstrap is logged, not fatal; the next start tries again.
 func New(d *kernel.Deps, users ports.UserDirectory) (*Module, error) {
 	d.Authz.Declare(kernel.Permission{Name: presentation.PermManage, Module: "rbac", Description: "Mengelola peran, izinnya, dan pemegangnya"})
-	svc := application.NewService(infrastructure.NewRepository(d.DB), users, d.Authz.Permissions)
+	svc := application.NewService(infrastructure.NewRepository(d.DB), users, d.Authz.Permissions, d.Audit)
 	m := &Module{svc: svc, auth: d.Auth, handler: presentation.NewHandler(svc, d.Auth, d.Authz)}
 
 	email := config.Get("RBAC_BOOTSTRAP_ADMIN_EMAIL", config.Get("USERS_BOOTSTRAP_EMAIL", ""))

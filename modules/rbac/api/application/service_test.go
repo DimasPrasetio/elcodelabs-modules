@@ -144,7 +144,7 @@ func setup() (*application.Service, *memRepo) {
 		2: {ID: 2, Email: "ana@example.com", IsActive: true},
 		3: {ID: 3, Email: "budi@example.com", IsActive: true},
 	}
-	return application.NewService(repo, users, catalog), repo
+	return application.NewService(repo, users, catalog, noAudit{}), repo
 }
 
 // admin is the bootstrapped Administrator; tests act as them unless they say otherwise.
@@ -158,6 +158,10 @@ func setupWithAdmin(t *testing.T) (*application.Service, *memRepo) {
 	}
 	return svc, repo
 }
+
+type noAudit struct{}
+
+func (noAudit) Record(context.Context, kernel.AuditEntry) {}
 
 func status(t *testing.T, err error) int {
 	t.Helper()
@@ -315,7 +319,7 @@ func TestCovers(t *testing.T) {
 func TestBootstrapReturnsWhenNoActiveAdministratorIsLeft(t *testing.T) {
 	repo := newMemRepo()
 	users := directory{1: {ID: 1, Email: "admin@example.com", IsActive: true}}
-	svc := application.NewService(repo, users, catalog)
+	svc := application.NewService(repo, users, catalog, noAudit{})
 	ctx := context.Background()
 	if ok, _ := svc.Bootstrap(ctx, "admin@example.com"); !ok {
 		t.Fatal("first bootstrap")

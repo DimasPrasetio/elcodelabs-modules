@@ -46,8 +46,9 @@ const WEB_SOURCE = /\.(tsx?|jsx?|mjs|css)$/;
 // Go modules the scaffolded kernel already requires: a module may import them without declaring.
 const KERNEL_GO_DEPS = ["github.com/go-sql-driver/mysql", "github.com/joho/godotenv"];
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-// Table names a statement reads or writes. "ON UPDATE" / "KEY UPDATE" are clauses, not tables.
-const SQL_TABLE_REFS = /\b(?:FROM|JOIN|INTO|(?<!(?:ON|KEY)\s+)UPDATE|TABLE(?:\s+IF\s+(?:NOT\s+)?EXISTS)?|REFERENCES)\s+`?([A-Za-z_][A-Za-z0-9_]*)`?/gi;
+// Table names a statement reads or writes. "ON UPDATE", "KEY UPDATE", and "FOR UPDATE" are
+// clauses, not tables.
+const SQL_TABLE_REFS = /\b(?:FROM|JOIN|INTO|(?<!(?:ON|KEY|FOR)\s+)UPDATE|TABLE(?:\s+IF\s+(?:NOT\s+)?EXISTS)?|REFERENCES)\s+`?([A-Za-z_][A-Za-z0-9_]*)`?/gi;
 const SQL_WORDS = new Set(["select", "duplicate", "delete", "update", "insert", "set", "where", "values", "lateral", "dual"]);
 const PROSE_FIELDS = new Set(["title", "summary", "when_to_use", "when_not_to_use", "version"]);
 
@@ -244,7 +245,14 @@ function checkGo(root, id, m, problem) {
 function checkAdapters(root, id, m, byId, problem) {
   const at = `modules/${id}`;
   const declared = new Map();
-  for (const port of m.ports ?? []) for (const [provider, a] of Object.entries(port.adapters ?? {})) declared.set(a.file, provider);
+  for (const port of m.ports ?? []) {
+    for (const [provider, a] of Object.entries(port.adapters ?? {})) {
+      declared.set(a.file, provider);
+      if (a.requires !== undefined && (!/^\d+\.\d+\.\d+$/.test(a.requires) || (byId.has(provider) && newer(a.requires, byId.get(provider).version)))) {
+        problem(at, `adapter-requires: the ${port.name} adapter for ${provider} requires ${provider} ${a.requires}, which is not a released version of it`);
+      }
+    }
+  }
   for (const f of walk(join(root, "modules", id, "adapters"))) {
     const provider = declared.get(`adapters/${f}`);
     if (!provider) {
@@ -280,7 +288,7 @@ function checkMigrations(root, id, m, problem) {
     const sql = readFileSync(join(root, "modules", id, "migrations", f), "utf8").replace(/--.*$/gm, "");
     const touched = [
       ...[...sql.matchAll(/\b(?:CREATE|ALTER|DROP|RENAME)\s+TABLE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?`?(\w+)`?/gi)].map((x) => x[1]),
-      ...[...sql.matchAll(/\b(?:INSERT\s+INTO|(?<!\bON\s+)UPDATE|DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?)\s+`?(\w+)`?/gi)].map((x) => x[1]),
+      ...[...sql.matchAll(/\b(?:INSERT\s+INTO|(?<!\b(?:ON|KEY|FOR)\s+)UPDATE|DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?)\s+`?(\w+)`?/gi)].map((x) => x[1]),
       ...[...sql.matchAll(/\bREFERENCES\s+`?(\w+)`?/gi)].map((x) => x[1]),
       ...[...sql.matchAll(/\bINDEX\s+`?\w+`?\s+ON\s+`?(\w+)`?/gi)].map((x) => x[1]),
     ];

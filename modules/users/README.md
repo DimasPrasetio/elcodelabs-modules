@@ -16,23 +16,37 @@ operator with `users.manage` cannot reset an administrator's password or lock th
 password change records `password_changed_at`, and the auth provider ends every session opened
 before it.
 
+**Own profile.** `GET|PUT /api/v1/account/profile` — any signed-in user reads their profile and
+changes their name. Email stays with administrators: changing it oneself is a way to take an
+account over. Changing a password is the auth provider's job (it checks the current password
+first) and reaches users through `UserClient.SetPassword`.
+
+**Audit.** Every change goes to `d.Audit` (kernel 5): `user.created`, `user.updated` (what changed,
+never a password), `user.deactivated`, `user.activated`, `user.profile_updated`.
+
 **First user.** With `USERS_BOOTSTRAP_EMAIL` and `USERS_BOOTSTRAP_PASSWORD` set, the module
 creates that user at startup when the table is empty. Remove both after the first sign-in.
 
-**Offers** `contracts.UserClient` — `GetByID` (with `PasswordChangedAt`), `GetByEmail`, `Search` (e.g. for assigning
+**Offers** `contracts.UserClient` — `GetByID` (with `PasswordChangedAt`), `SetPassword` (for an
+auth provider; validates 8–72 bytes, records the change), `GetByEmail`, `Search` (e.g. for assigning
 roles), `GetCredentialsByEmail` (for an auth provider).
 It imports no other module.
 
 **Web:** `/users` — the Bingkai Navy list template: toolbar search with a filter chip, data
 table (status pill, ⋯ row menu), pagination with rows per page; add/edit in a side sheet,
-deactivate/activate with confirmation, toasts on success; nav entry "Pengguna" in "Pengaturan" (shown with
+deactivate/activate with confirmation, toasts on success; `/account` — "Profil saya", linked
+from the user menu through the `user-menu:items` slot; nav entry "Pengguna" in "Pengaturan" (shown with
 `users.read`); changing shown with `users.manage`. Indonesian copy. Built on `ui-core`,
 `ui-data`, `ui-forms`, `ui-feedback`.
 
-**Not here:** roles and who holds which permission (the `rbac` module), self-service
-profile/password change.
+**Not here:** roles and who holds which permission (the `rbac` module), passwords (the auth
+provider), changing one's own email.
 
 ## Changes
+
+- **0.5.0** — needs kernel 5. Own profile (`/api/v1/account/profile`, page `/account`, menu item
+  through the `user-menu:items` slot); `UserClient.SetPassword` for an auth provider's change and
+  reset flows; every change recorded in `d.Audit`.
 
 - **0.4.0** — needs kernel 4. Migration 002 adds `password_changed_at` (a password change ends
   earlier sessions with auth ≥ 0.4). Accounts holding more permissions than the actor are off
