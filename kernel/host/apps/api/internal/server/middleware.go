@@ -113,6 +113,15 @@ func sameOrigin(next http.Handler) http.Handler {
 	})
 }
 
+// shuttingDown hands every request the channel closed when shutdown starts (request.AllowStream).
+func shuttingDown(ch <-chan struct{}) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(request.WithShutdown(r.Context(), ch)))
+		})
+	}
+}
+
 // statusRecorder remembers the status a handler wrote.
 type statusRecorder struct {
 	http.ResponseWriter

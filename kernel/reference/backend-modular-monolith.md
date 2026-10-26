@@ -131,10 +131,18 @@ order/ports.ProductCatalog.GetPrice(productId)
 
 ## Transaction and orchestration
 
-- DB transactions are scoped inside a single module.
 - Cross-module flows are handled by an application service / orchestrator through the module's ports.
-- Strong consistency uses explicit orchestration.
-- Side effects may use an event/outbox pattern when the project genuinely needs it.
+- **Go (kernel 6+): one transaction across modules.** The orchestrator wraps the flow in
+  `d.Tx.Do(ctx, …)`; every port it calls receives that `ctx` and its provider's repository
+  joins the transaction (`queries.New(d.Tx.Conn(ctx))`). Stock, sales, and ledger commit or roll
+  back together — one MySQL, one process, no saga. Effects outside the database never run inside
+  it: they are tasks (`d.Tasks.Enqueue`) written in the same transaction.
+- **Reactions are events, not calls**: what other modules do *because* something happened
+  (notify, recalculate, post to the ledger later) is `d.Events.Publish` inside the transaction —
+  each subscriber runs later in its own transaction, at least once, unordered. What must be true
+  *in the same commit* is a port call inside `d.Tx`, never an event.
+- NestJS / Express have no shared transaction in their kernel: DB transactions stay inside one
+  module and the rules below apply.
 
 Example flow:
 
@@ -148,12 +156,23 @@ OrderApplicationService
 
 Never call another module's repository directly.
 
-A flow across modules is **not atomic** — each step commits in its own module. Order the steps
+Without a shared transaction (Node stacks, or a step that calls an outside system), a flow
+across modules is **not atomic** — each step commits on its own. Order the steps
 so that a failure part-way leaves nothing wrong: check first, then the step that is easiest to
 undo, the hardest last; make each step safe to repeat (an idempotency key, or "set" rather than
 "add"); and on failure after a commit, run the compensating call (`ReleaseStock` for
 `DecreaseStock`) or record the flow as failed for someone to finish. When a flow must be all or
 nothing, the data belongs in one module.
+
+## Company and branch scope
+
+An app may serve several companies or branches (one client, one deployment). The request's
+scope — one company, optionally one branch — is resolved by the kernel (Go:
+`kernel.ScopeFrom(ctx)`); the organization structure itself is a module. A module whose data
+belongs to a company declares it (`"scoped": true`): every table carries `company_id` (and
+`branch_id` where it means something), business keys include it, and every query filters by it
+**explicitly** — there is no hidden global filter. Modules whose data is not a company's
+(sessions, a CMS) carry nothing. Without an organization module everything is company 1.
 
 ## Deleting data other modules point at
 

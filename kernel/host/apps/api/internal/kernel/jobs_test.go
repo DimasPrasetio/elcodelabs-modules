@@ -13,7 +13,7 @@ import (
 func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func TestJobsRunRepeatedlyAndNeverOverlap(t *testing.T) {
-	s := NewJobsSlot(nil, "test", quietLog())
+	s := NewJobsSlot(nil, "test", nil, quietLog())
 	var runs, running, overlapped atomic.Int32
 	s.Every("test.slow", time.Second, func(ctx context.Context) error {
 		if running.Add(1) > 1 {
@@ -42,7 +42,7 @@ func TestJobsRunRepeatedlyAndNeverOverlap(t *testing.T) {
 }
 
 func TestStopCancelsARunningJob(t *testing.T) {
-	s := NewJobsSlot(nil, "test", quietLog())
+	s := NewJobsSlot(nil, "test", nil, quietLog())
 	started := make(chan struct{})
 	var cancelled atomic.Bool
 	s.Every("test.long", time.Second, func(ctx context.Context) error {
@@ -72,7 +72,7 @@ func TestEveryRefusesMistakes(t *testing.T) {
 					t.Errorf("%s: no panic", name)
 				}
 			}()
-			register(NewJobsSlot(nil, "test", quietLog()))
+			register(NewJobsSlot(nil, "test", nil, quietLog()))
 		}()
 	}
 }

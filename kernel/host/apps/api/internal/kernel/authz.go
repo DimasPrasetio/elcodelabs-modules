@@ -28,6 +28,33 @@ type Authorizer interface {
 	Covers(ctx context.Context, target int64) bool
 }
 
+// Units is how far a permission reaches inside the active company: every branch, or these.
+type Units struct {
+	AllBranches bool
+	BranchIDs   []int64
+}
+
+// Includes reports whether branch is within reach (branch 0, "the company itself", only with
+// AllBranches).
+func (u Units) Includes(branch int64) bool {
+	if u.AllBranches {
+		return true
+	}
+	for _, b := range u.BranchIDs {
+		if b == branch {
+			return true
+		}
+	}
+	return false
+}
+
+// ScopedAuthorizer is what an authorization provider that grants roles per branch adds: which
+// branches of the active company a permission reaches — for list filters. Optional: a provider
+// without it grants a permission across the whole company.
+type ScopedAuthorizer interface {
+	Units(ctx context.Context, permission string) (Units, error)
+}
+
 // AuthzSlot is the authorization every module receives in Deps.Authz. Like Auth, it is a
 // kernel port rather than a per-module one: nearly every module needs it.
 //
@@ -113,6 +140,15 @@ func (s *AuthzSlot) Covers(ctx context.Context, target int64) bool {
 	}
 	_, signedIn := s.auth.UserID(ctx)
 	return signedIn
+}
+
+// Units is how far permission reaches for the signed-in user in the active company: the
+// provider's answer when it grants per branch, else every branch when Can, none otherwise.
+func (s *AuthzSlot) Units(ctx context.Context, permission string) (Units, error) {
+	if sp, ok := s.provider().(ScopedAuthorizer); ok {
+		return sp.Units(ctx, permission)
+	}
+	return Units{AllBranches: s.Can(ctx, permission)}, nil
 }
 
 // Require wraps h so it runs only for a signed-in user holding permission: 401 without a

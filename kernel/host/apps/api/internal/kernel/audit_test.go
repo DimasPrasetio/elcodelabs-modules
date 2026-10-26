@@ -23,7 +23,7 @@ func (f fixedAuth) UserID(context.Context) (int64, bool) { return f.id, f.id != 
 func TestAuditFillsWhoAndWhereFromTheRequest(t *testing.T) {
 	auth := &AuthSlot{}
 	auth.Provide(fixedAuth{id: 7})
-	s := NewAuditSlot(auth, quietLog())
+	s := NewAuditSlot(auth, nil, quietLog())
 	sink := &memSink{}
 	s.Provide(sink)
 	ctx := request.WithRequestID(request.WithClientIP(context.Background(), "203.0.113.7"), "req-1")
@@ -42,6 +42,6 @@ func TestAuditFillsWhoAndWhereFromTheRequest(t *testing.T) {
 }
 
 func TestAuditWithoutAProviderOnlyLogs(t *testing.T) {
-	s := NewAuditSlot(&AuthSlot{}, quietLog())
+	s := NewAuditSlot(&AuthSlot{}, nil, quietLog())
 	s.Record(context.Background(), AuditEntry{Module: "x", Action: "y.z"}) // must not panic
 }

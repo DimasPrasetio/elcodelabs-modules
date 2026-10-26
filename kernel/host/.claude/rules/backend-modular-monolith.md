@@ -9,5 +9,6 @@ Applies to: `apps/api/**`.
   with a small adapter that holds no business logic.
 - Forbidden: cross-module DB joins and cross-module foreign keys.
 - Cross-module relations are primitive IDs; resolve them through the module's own ports.
-- Transactions are scoped inside a single module; orchestrate cross-module flows via app services.
+- A change spanning modules commits atomically through the kernel's `d.Tx` (ports called with its ctx);
+  reactions that may happen later go through `d.Events` — never a transaction a module opens itself.
 - `shared/` holds only technical utilities (errors, response, request, logger, validator, pagination, utils) — never domain logic.

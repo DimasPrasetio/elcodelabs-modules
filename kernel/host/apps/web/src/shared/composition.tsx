@@ -18,9 +18,10 @@ export interface NavItem {
 /**
  * Where modules put content into another module's screen. Open by design: a module hosting a
  * slot names it "<owner>:<place>" (e.g. "user-menu:items", "settings:sections") and documents
- * it; the frame's own two are "sidebar-footer" and "header-end".
+ * it; the frame's own are "sidebar-footer", "header-end", and "shell:scope" (the company/branch
+ * picker an organization module puts in the header).
  */
-export type SlotName = "sidebar-footer" | "header-end" | (string & {});
+export type SlotName = "sidebar-footer" | "header-end" | "shell:scope" | (string & {});
 
 export interface Composition {
   nav: NavItem[];

@@ -215,8 +215,14 @@ module; everything it contributes goes through this object:
 - `@/shared/app-events` (`emitAppEvent` / `onAppEvent`) is how a module tells the others
   something happened without importing them — e.g. auth emits `"session:changed"` and the
   authorization module reloads the user's permissions; users emits `"profile:changed"` and auth
-  reloads the name in the user menu. Add an event name only for something every module may care
-  about.
+  reloads the name in the user menu; `"scope:changed"` fires when the active company or branch
+  changes, and every page reloads its data. Add an event name only for something every module
+  may care about.
+- `@/shared/scope` — the company/branch this tab works in: `useScope()`, `setScope("2:5")`
+  (`"<company>"` or `"<company>:<branch>"`; empty = the user's default). The http client sends it
+  as `X-Scope` on every request; the API refuses a scope the user is not placed in. Only an
+  organization module's picker (slot `"shell:scope"` in the header) calls `setScope`; an app
+  with one company never does.
 - `shared/kernel.ts` states the kernel version (see [backend-go.md](backend-go.md#kernel-versions)).
 
 ```tsx
@@ -299,6 +305,7 @@ Centralized client in `src/shared/services/http-client.ts`:
 
 ```ts
 import axios from "axios";
+import { getScope } from "@/shared/scope";
 
 export const httpClient = axios.create({
   // Empty = same origin. Proxied by Vite in dev, served by the same container in
@@ -329,6 +336,9 @@ export function onUnauthorized(handler: () => void): () => void {
 
 httpClient.interceptors.request.use((config) => {
   if (authToken) config.headers.Authorization = `Bearer ${authToken}`;
+  // The company/branch this tab works in; the API checks it against the user's placement.
+  const scope = getScope();
+  if (scope) config.headers["X-Scope"] = scope;
   return config;
 });
 

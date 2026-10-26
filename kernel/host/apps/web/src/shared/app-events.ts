@@ -6,7 +6,9 @@ export type AppEvent =
   /** Someone signed in or out, or the session expired. */
   | "session:changed"
   /** The signed-in user's own profile changed (their name): whoever shows it reloads it. */
-  | "profile:changed";
+  | "profile:changed"
+  /** The active company or branch changed (shared/scope.ts): every page reloads its data. */
+  | "scope:changed";
 
 const listeners = new Map<AppEvent, Set<() => void>>();
 

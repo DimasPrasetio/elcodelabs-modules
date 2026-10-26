@@ -1,6 +1,6 @@
-# Kernel 5 (pinned)
+# Kernel 6 (pinned)
 
-The kernel every module in this library builds on, pinned from monorepo-elcodelabs monorepo-elcodelabs/kernel/v5.0.
+The kernel every module in this library builds on, pinned from monorepo-elcodelabs monorepo-elcodelabs/kernel/v6.0.
 **Read-only**: nothing here is edited by hand — `npm run check` refuses any change that
 kernel.lock.json does not record, and a kernel update arrives only through
 `scripts/kernel-sync.mjs`, in a commit of its own.

@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"strings"
+	"time"
 )
 
 // Config holds only the settings the kernel itself needs. A module reads its own settings
@@ -21,6 +22,9 @@ type Config struct {
 	// must outlive a deploy. /app/data in the image (a volume on the server); "data" in dev,
 	// relative to apps/api. A module keeps its files in DataDir/<module>/.
 	DataDir string
+	// Location (APP_TIMEZONE, default Asia/Jakarta) is where business dates and calendar
+	// schedules are counted. Instants are stored in UTC either way.
+	Location *time.Location
 	// TrustedProxies (TRUSTED_PROXIES, comma-separated CIDRs) are the hops allowed to say who
 	// the client is through X-Forwarded-For — on the VPS, the host nginx over the docker bridge.
 	TrustedProxies []netip.Prefix
@@ -36,6 +40,12 @@ func Load() (*Config, error) {
 		PublicDir: Get("PUBLIC_DIR", ""),
 		DataDir:   Get("DATA_DIR", "data"),
 	}
+	tz := Get("APP_TIMEZONE", "Asia/Jakarta")
+	loc, err := time.LoadLocation(tz)
+	if err != nil || tz == "Local" {
+		return nil, fmt.Errorf("APP_TIMEZONE must be an IANA time zone such as Asia/Jakarta (got %q)", tz)
+	}
+	c.Location = loc
 	if c.DBDSN == "" {
 		return nil, errors.New("DB_DSN is not set — copy .env.example to .env at the repo root")
 	}

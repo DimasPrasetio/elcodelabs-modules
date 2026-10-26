@@ -142,8 +142,9 @@ there for the full code.
 `internal/config`, `database`, `kernel`, `server`, and `shared/` are the **kernel**: the stable
 surface every module — hand-written or from the module library — is built against.
 
-- **`kernel.Deps`** (`Config`, `DB`, `Log`, `Auth`, `Authz`, `Jobs`, `Audit`) is what a module's `New` receives.
-  A module keeps what it needs and never reaches for globals.
+- **`kernel.Deps`** (`Config`, `DB`, `Log`, `Auth`, `Authz`, `Jobs`, `Audit`, `Tx`, `Tasks`,
+  `Events`, `Clock`, `Scope`, `HTTP`) is what a module's `New` receives. A module keeps what it
+  needs and never reaches for globals.
 - **`Deps.Auth`** is the one kernel-level port: authentication. A module guards a handler with
   `d.Auth.Require(h)` and reads the signed-in user with `d.Auth.UserID(r.Context())`; the
   composition root fills the slot with `d.Auth.Provide(...)` from whichever module does auth.
@@ -167,14 +168,108 @@ surface every module — hand-written or from the module library — is built ag
   itself, a panic is logged — started after the registry and stopped after the HTTP server drains.
   Each run holds a MySQL named lock scoped to the app's database, so while a deploy briefly runs
   two containers a job still runs in one place. A job that works through rows still claims them
-  (`FOR UPDATE SKIP LOCKED`) and is safe to repeat; a run may be cut short by shutdown. No queue
-  service: a module that queues work keeps it in a table of its own (the library's `mailer`).
-- **`Deps.Audit`** records who changed what: `d.Audit.Record(ctx, kernel.AuditEntry{Module,
-  Action: "<thing>.<verb>", Target: "<type>:<id>", Summary, Data})` after the change is committed.
-  The kernel adds the time, the signed-in user (or `Actor` when there is none yet), the client IP,
-  and the request ID. Without a provider a record is a log line; an audit module (the library's
-  `audit-log`) stores it — `d.Audit.Provide(...)`. A storage failure is logged, never returned.
+  (`FOR UPDATE SKIP LOCKED`) and is safe to repeat; a run may be cut short by shutdown.
+  **Calendar schedules** — `d.Jobs.Daily(name, "02:00", fn)`, `Weekly(name, time.Monday, "07:30",
+  fn)`, `Monthly(name, 1 | kernel.LastDay, "23:00", fn)` — run in `APP_TIMEZONE`, once per tick
+  across containers (the one that records the tick in `kernel_schedule_runs` runs it), catch up a
+  tick missed within 24 h once (never one from before the job was first deployed) — looking
+  again every minute, so a tick cut short by shutdown runs again and one whose container died is
+  taken over once its timeout passed (`CatchUp(0)` gives that up) — time out after 30 min
+  (`Timeout`, `CatchUp` options), and count
+  failures in `kernel_schedules` (warned at 5 in a row; never switched off by themselves). A
+  local time that does not exist (DST gap) fires at the first instant after it; one that exists
+  twice fires at the first. A calendar job waits on real time, not `kerneltest`'s clock: test
+  its function directly.
+- **`Deps.Audit`** records who changed what: `d.Audit.Record(ctx, kernel.AuditEntry{Kind,
+  Module, Action: "<thing>.<verb>", Target: "<type>:<id>", Summary, Data})`. `Kind` is
+  `AuditChange` (default), `AuditAccess` (sensitive personal data viewed — NIK, salary, bank
+  account), `AuditExport` (data downloaded), or `AuditSecurity` (failed sign-ins, permission
+  changes): UU PDP Art. 46 asks a breach notice to say which data, when, and how. The kernel
+  adds the time, the user (signed in, `Actor`, or the user a task acts for), the client IP, the
+  request ID, and the scope (none — company 0, a system record — for a record made without one
+  in an app with several companies, such as a failed sign-in). Inside `d.Tx` the sink writes in that transaction — the record
+  commits or rolls back with the change. Without a provider a record is a log line; an audit
+  module (the library's `audit-log`) stores it — `d.Audit.Provide(...)`. A storage failure is
+  logged, not returned — but one that ends the transaction (a deadlock) still fails `d.Tx`.
   Never put secrets in `Data`.
+- **`Deps.Tx`** makes changes in several modules commit or roll back together:
+  `d.Tx.Do(ctx, func(ctx context.Context) error { … })`. The transaction travels in `ctx`; a
+  repository builds its queries per call with `queries.New(d.Tx.Conn(ctx))` (the transaction
+  when `ctx` carries one, else the pool), so a port called inside `Do` works inside the same
+  transaction — modules never pass `*sql.Tx` around and never call `BeginTx`. A nested `Do` joins
+  the outer one (no savepoint); only the outermost commits, **retries the whole closure** after a
+  deadlock (MySQL 1213) or lock wait timeout (1205 — the kernel rolls back the rest of the
+  transaction first; MySQL undoes only the statement), up to 4 attempts, and then runs the hooks
+  of `d.Tx.AfterCommit(ctx, fn)` (dropped on rollback; immediate outside a transaction). Options:
+  `kernel.ReadCommitted()`, `kernel.NoRetry()` (also from a nested `Do`: the whole transaction
+  then never repeats). After a deadlock or a lost connection the transaction is gone on the
+  server: the driver reports it wherever it surfaces (an Exec, a QueryRow's Scan, reading rows),
+  later statements in it are refused, and `Do` fails with it — and retries — even when the code
+  ignored the error. (The watch travels in `ctx`: a statement run on the pool with `fn`'s ctx,
+  not through `d.Tx.Conn(ctx)`, counts as the transaction's too — another reason not to.) **Never call the outside world inside `Do`**
+  (email, payment, tax APIs): a retry repeats it and a rollback cannot take it back — enqueue a
+  task instead. Lock what you change with `SELECT … FOR UPDATE`, parents first, in ID order.
+- **`Deps.Tasks`** is the durable background queue (table `kernel_tasks`):
+  `d.Tasks.Register("<module>.<task>", handler, kernel.TaskKind{Lane, Concurrency, Timeout,
+  MaxAttempts})` in `New`, `d.Tasks.Enqueue(ctx, kind, payload, kernel.After(d) | kernel.At(t) |
+  kernel.Dedupe(key))` anywhere (`Dedupe`: at most one *waiting* task per key — one enqueued
+  while it runs queues behind it, so work that reads the current state sees every change).
+  Inside `d.Tx` the task is written in that transaction — it
+  exists only if the transaction commits. Two lanes: `short` (2 workers, 60 s default timeout)
+  and `long` (1 worker, 30 min) — with the 2 job slots (each holding its run lock's connection
+  too), background work holds about 7 of the pool's 10 connections at most. A worker claims a task with `FOR UPDATE SKIP LOCKED` under a lease; the
+  handler runs inside `d.Tx` and the task is marked done **in the same transaction**, only while
+  the lease holds — so its database effects happen exactly once. A failure retries after 30 s,
+  doubling up to 1 h, then the task is `failed` until an administrator retries or discards it
+  (`List`, `Retry`, `Discard`); a dead worker's task is reclaimed when its lease expires (failed
+  if that was its last attempt); done tasks are purged after 7 days. On `SIGTERM` workers stop
+  claiming at once and finish what runs while requests drain; a task still running at the end
+  is cancelled and goes back in the queue, its attempt not counted (a handler that ignores its
+  cancelled ctx is abandoned after 3 s and reclaimed when its lease ends). Effects outside the
+  database (email, an API) can repeat after a crash: make them idempotent. `NonTransactional: true` (long batch work that commits itself)
+  makes database effects at-least-once too. A handler runs with the actor, scope, and request
+  ID of the request that enqueued it (`kernel.ActorFrom(ctx)`, `kernel.ScopeFrom(ctx)`; no scope
+  when it had none).
+- **`Deps.Events`** carries what happened between modules that never import each other:
+  `d.Events.Publish(ctx, "<module>.<thing>.<past-verb>", version, payload)` (a publisher declares
+  its events — name, version, fields — in `module.json` `emits` and its README); subscribers are
+  wired only in the composition root, `d.Events.On(name, "<module>.<reaction>", handler)`, written
+  by the installer from `listens`. Each delivery is a task in the publisher's transaction: an
+  event exists only if its change committed, survives a crash, and runs in the subscriber's own
+  transaction — one failing subscriber neither blocks the others nor undoes the publisher. At
+  least once, **not ordered**: subscribers check the document's version or time. There are no
+  synchronous listeners — what must happen in the same transaction is a port call inside `d.Tx`.
+  The payload is JSON: a subscriber decodes it into its own struct (no import of the
+  publisher's `contracts/`). Within a version a publisher only adds fields.
+- **`Deps.Clock`** is the time (`Now()`, UTC) and `APP_TIMEZONE` (`Location()`, default
+  `Asia/Jakarta`; an invalid name stops the API). `kernel.Today(ctx, d.Clock)` is the business
+  date in the request's scope (a branch's time zone, else the app's). Tests move it
+  (`kerneltest`). The binary embeds the time zone database (`time/tzdata`).
+- **`Deps.Scope`** — the company and branch a request works in: `kernel.ScopeFrom(ctx)`
+  (`CompanyID` ≥ 1, `BranchID` 0 = the whole company, `Location`). `d.Auth.Require` resolves it
+  for the signed-in user from the `X-Scope` header the web sends, through the resolver an
+  organization module provides (`d.Scope.Provide`) — a scope the user is not placed in is
+  refused (403). Without a resolver every request works in company 1, and so does work with no
+  scope (a calendar job, a public route, a task either enqueues). With a resolver there is no
+  default: `ScopeFrom` on a ctx without a scope panics (a failed task, a 500) rather than file
+  data under the wrong company — background work over company data loops
+  `d.Scope.Companies(ctx)` with `kernel.WithScope`, a public route picks its company itself, and
+  `kernel.HasScope(ctx)` tells whether ctx carries one. `d.Authz.Units(ctx,
+  permission)` says which branches a permission reaches (a provider implementing
+  `kernel.ScopedAuthorizer` answers per branch; otherwise the whole company when `Can`). Tasks
+  and events carry the scope; `d.Scope.Companies(ctx)` lists companies for per-company jobs. A
+  module that keeps company data declares `"scoped": true` in `module.json`: every table of it
+  has `company_id BIGINT NOT NULL DEFAULT 1` (plus `branch_id` where it means something), its
+  business keys include `company_id`, and every query names `company_id = ?` explicitly — no
+  hidden filter; a system query across companies (a purge) is marked `-- all companies` and
+  named `System…`. Modules that are not scoped (sessions, a blog) carry nothing.
+- **`Deps.HTTP`** and **`database.OpenWith`** are where kits plug in: `d.HTTP.Use(name, mw)` in
+  the composition root adds middleware after the kernel's own and before the routes;
+  `database.OpenWith(dsn, database.Options{Wrap: …})` in `main.go` wraps the driver (metrics,
+  tracing).
+- **`kerneltest`** gives a module's unit tests a kernel without a database:
+  `k := kerneltest.Deps(t)` (`k.Deps`, a movable `k.Clock`, `k.Audit.Records()`),
+  `k.RunTasks()`, `k.Enqueued()`, `k.Published()`, `kerneltest.In(ctx, company, branch)`.
 - **`kernel.Version`** is the contract version a library module's `requires_kernel` (in its
   `module.json`) is checked against — see [Kernel versions](#kernel-versions) for when it moves.
 - **Settings**: `config.Config` holds only what the kernel needs (`APP_ENV`, `APP_PORT`,
@@ -194,6 +289,11 @@ surface every module — hand-written or from the module library — is built ag
   nginx, from `TRUSTED_PROXIES`; `ClientIPFrom(ctx)` and `RequestID(ctx)` where only the context
   is at hand), `request.AllowTransfer(w, bytes)` (first thing in a handler that takes an upload
   or sends a file: the server's 30 s read / 60 s write timeouts are sized for API calls),
+  `request.AllowStream(w, r)` (a server-sent event stream: a 10 s deadline per write instead of
+  the server's 60 s for the whole response, a heartbeat every
+  20 s, its `Context()` ends when the client leaves or shutdown starts; `defer s.Close()`, hold no
+  database connection while waiting, mount it at `/api/v1/<module>/stream…` — the deploy's nginx
+  passes those unbuffered; an event is a hint, the client fetches the data again),
   `pagination.FromRequest`, and `validator.Validator`, which collects every field error into
   one 422.
 - **Server**: `http.ServeMux` (method patterns such as `"GET /api/v1/orders/{id}"`), an unknown
@@ -202,13 +302,23 @@ surface every module — hand-written or from the module library — is built ag
   `/api/` call a browser marks as coming from another site (`Sec-Fetch-Site`, or a foreign
   `Origin`) is refused with 403 — sibling subdomains share a "site" and its cookies, so this holds
   whatever domains the app runs on. Panics become a 500 envelope. `SIGTERM` (`docker stop`) drains
-  in-flight requests for up to 25 s (inside the compose `stop_grace_period`).
+  in-flight requests, and lets running tasks finish, for up to 25 s (inside the compose
+  `stop_grace_period`); open streams end at once, and jobs are cancelled (a calendar tick cut
+  short runs again).
 - **Config**: `APP_ENV` must be `development` or `production`, and explicit in the container
   (the image sets `PUBLIC_DIR`); the database session runs in UTC whatever the host MySQL's time
   zone is. `Config.DataDir` (`DATA_DIR`) is the one folder the app writes to: `/app/data` in the
   image, mounted from `~/<slug>/data` on the server and backed up nightly; `data` (relative to
   `apps/api`) in development. A module keeps its files in `DataDir/<module>/` and checks in `New`
-  that it can write there.
+  that it can write there. `APP_TIMEZONE` (default `Asia/Jakarta`) places business dates and
+  calendar schedules.
+- **Time columns**: an instant (when something happened) is `DATETIME(6)` holding UTC — the
+  session is UTC, and `TIMESTAMP` ends on 19 January 2038, too close for business records kept
+  10 years; a business date (invoice date, attendance day) is `DATE`, from `kernel.Today`.
+  Tables created before kernel 6 with `TIMESTAMP(6)` move with an expand/contract migration when
+  their module is next changed.
+- The kernel owns the tables `kernel_tasks`, `kernel_schedules`, and `kernel_schedule_runs`
+  (migration `<ts>_kernel_6`); no module reads or writes `kernel_*` — it uses the slots.
 - `shared/apperror` is not named `errors` so it never shadows the standard library package.
 
 ### Kernel versions
@@ -235,6 +345,7 @@ one (its `kernel/`) and its module developers build on that alone.
 | 3 | web: `shared/lib/field-classes.ts` (`FIELD`), the Bingkai Navy primitives (`button` with `loading`, `input`, `card`, `dialog`), the `--animate-loader-slide` token in `theme.css`; Indonesian default messages in the kernel and starter pages |
 | 4 | security and safety: `DecodeJSON` JSON-only (415) with safe messages; cross-site writes refused; `request.ClientIP` + `TRUSTED_PROXIES`; `Authorizer.Covers` / `d.Authz.Covers`; duplicate permission names and production-without-provider refused; explicit `APP_ENV`; UTC DB sessions; 25 s shutdown; tests for these in `server/` and `shared/request/`; web: route error and 404 pages, `http-client` sends cookies to a separate API origin |
 | 5 | `Deps.Jobs` (`jobs.go`), `Deps.Audit` (`audit.go`), `request.RequestID` / `ClientIPFrom` / `AllowTransfer`, `Config.DataDir` and the `./data:/app/data` volume (compose, Dockerfile, deploy.sh), tests for jobs and audit; web: open slot names, the `profile:changed` app event |
+| 6 | `Deps.Tx` (`tx.go`), `Deps.Tasks` (`tasks.go`), `Deps.Events` (`events.go`), calendar schedules (`calendar.go`), `Deps.Clock` (`clock.go`) and `APP_TIMEZONE`, `Deps.Scope` (`scope.go`; `Authz.Units`, `ScopedAuthorizer`, scope resolved in `Auth.Require`), `AuditEntry.Kind` and the record's scope, `Deps.HTTP` (`http.go`), `kernel.NewDeps`, `database.OpenWith` / `Retryable`, `request.AllowStream`, the `kerneltest` package, MySQL tests (`kernel_mysql_test.go`, run with `KERNEL_TEST_DSN`), the kernel's tables (migration `<ts>_kernel_6`), `time/tzdata`; deploy: the nginx stream location, `APP_TIMEZONE` in the env examples, the kernel tests in CI; web: `shared/scope.ts` (`X-Scope`), the `scope:changed` app event, the `shell:scope` slot. `NewJobsSlot` and `NewAuditSlot` take a clock — built by `kernel.NewDeps` |
 
 A project scaffolded on an older kernel moves up by copying the new kernel files from this
 skill's `scripts/templates/` (for 2: `internal/kernel/authz.go`, the `Authz` field in `Deps`,
@@ -250,7 +361,14 @@ implement `Covers`; for 5: `internal/kernel/jobs.go` and `audit.go`, the `Jobs`/
 `data/` step in `deploy.sh`, the Dockerfile's `/app/data`, the `.gitignore` line
 `apps/api/data/`, and the web files `shared/composition.tsx` and `shared/app-events.ts`; on the
 server, re-install `scripts/server/elcodelabs-backup.sh` with `APPS_ROOT` set so `data/` is
-backed up), then raising both version numbers.
+backed up; for 6: every file in `internal/kernel/` (with `kerneltest/`), `internal/config/`,
+`internal/database/`, `internal/server/`, `internal/shared/request/`, and `cmd/server/main.go`;
+`migrations/kernel_6.*.sql.tmpl` copied to `apps/api/migrations/<a fresh timestamp>_kernel_6.*.sql`;
+`APP_TIMEZONE` in `.env.example` and the production example; the stream `location` in
+`infra/nginx/nginx.conf` (then reload nginx on the server); the kernel-test step in
+`.github/workflows/ci.yml`; and the web files `shared/scope.ts`, `shared/app-events.ts`,
+`shared/composition.tsx`, `shared/services/http-client.ts`. Library modules for kernel 6 are
+then upgraded with `module.mjs upgrade`), then raising both version numbers.
 
 ## Module contract and the registry
 

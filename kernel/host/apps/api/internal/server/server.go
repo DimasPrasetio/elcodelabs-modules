@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"testbed-app/internal/database"
@@ -54,14 +55,20 @@ func New(d *kernel.Deps, register func(mux *http.ServeMux) error) (*http.Server,
 		}
 	}
 
-	return &http.Server{
+	// Streams (request.AllowStream) end when shutdown starts instead of holding the drain.
+	shutdown := make(chan struct{})
+	mw := []func(http.Handler) http.Handler{requestID(d.Log), clientIP(d.Config.TrustedProxies), logRequests, recoverPanics, sameOrigin, shuttingDown(shutdown)}
+	srv := &http.Server{
 		Addr:              ":" + d.Config.Port,
-		Handler:           chain(mux, requestID(d.Log), clientIP(d.Config.TrustedProxies), logRequests, recoverPanics, sameOrigin),
+		Handler:           chain(mux, append(mw, d.HTTP.Middleware()...)...),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
-	}, nil
+	}
+	var closeOnce sync.Once
+	srv.RegisterOnShutdown(func() { closeOnce.Do(func() { close(shutdown) }) })
+	return srv, nil
 }
 
 // spa serves dir, falling back to index.html for client-side routes.

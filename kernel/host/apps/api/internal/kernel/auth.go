@@ -2,6 +2,7 @@ package kernel
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 
@@ -23,9 +24,14 @@ type Authenticator interface {
 // fills it with Provide; modules may wrap handlers before that, because the provider is
 // looked up per request. Until a provider is set, every guarded request answers 401.
 type AuthSlot struct {
-	mu sync.RWMutex
-	p  Authenticator
+	mu    sync.RWMutex
+	p     Authenticator
+	scope *ScopeSlot
 }
+
+// NewAuthSlot returns the slot. Every request it lets through works in the scope scope resolves
+// (the default company when nothing provides one).
+func NewAuthSlot(scope *ScopeSlot) *AuthSlot { return &AuthSlot{scope: scope} }
 
 // Provide sets the auth provider. Called once, from internal/modules/registry.go.
 func (s *AuthSlot) Provide(p Authenticator) {
@@ -40,15 +46,30 @@ func (s *AuthSlot) provider() Authenticator {
 	return s.p
 }
 
-// Require implements Authenticator.
+// Require implements Authenticator. Once the provider lets a request through, the request's
+// scope (company, branch) is resolved for the signed-in user from the X-Scope header — a scope
+// the user is not placed in is refused (403).
 func (s *AuthSlot) Require(h http.Handler) http.Handler {
+	scoped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uid, _ := s.UserID(r.Context())
+		sc, err := s.scope.Resolve(r.Context(), uid, r.Header.Get("X-Scope"))
+		if errors.Is(err, ErrScopeDenied) {
+			response.Fail(w, http.StatusForbidden, "Anda tidak memiliki akses ke perusahaan atau cabang ini", nil)
+			return
+		}
+		if err != nil {
+			response.Error(w, r, err)
+			return
+		}
+		h.ServeHTTP(w, r.WithContext(WithScope(r.Context(), sc)))
+	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := s.provider()
 		if p == nil {
 			response.Fail(w, http.StatusUnauthorized, "Autentikasi belum dikonfigurasi", nil)
 			return
 		}
-		p.Require(h).ServeHTTP(w, r)
+		p.Require(scoped).ServeHTTP(w, r)
 	})
 }
 

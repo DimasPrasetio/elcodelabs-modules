@@ -31,14 +31,16 @@ const maxConcurrentJobs = 2
 type JobsSlot struct {
 	db     *sql.DB // nil in tests: runs without the lock
 	prefix string  // the database name: GET_LOCK names are server-wide
+	clock  Clock
 	log    *slog.Logger
 	sem    chan struct{}
 
-	mu      sync.Mutex
-	jobs    []*job
-	started bool
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	mu       sync.Mutex
+	jobs     []*job
+	calendar []*calJob
+	started  bool
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
 }
 
 type job struct {
@@ -53,9 +55,37 @@ type job struct {
 // deploy overlaps for one or two runs, a lock held for longer means something else holds it.
 const skipsBeforeWarning = 5
 
-// NewJobsSlot returns the slot. lockPrefix scopes the named locks (the database name).
-func NewJobsSlot(db *sql.DB, lockPrefix string, log *slog.Logger) *JobsSlot {
-	return &JobsSlot{db: db, prefix: lockPrefix, log: log, sem: make(chan struct{}, maxConcurrentJobs)}
+// NewJobsSlot returns the slot. lockPrefix scopes the named locks (the database name); clock
+// places calendar schedules (Daily, Weekly, Monthly) in the app's time zone.
+func NewJobsSlot(db *sql.DB, lockPrefix string, clock Clock, log *slog.Logger) *JobsSlot {
+	if clock == nil {
+		clock = NewClock(nil)
+	}
+	s := &JobsSlot{db: db, prefix: lockPrefix, clock: clock, log: log, sem: make(chan struct{}, maxConcurrentJobs)}
+	if db != nil {
+		s.Every("kernel.schedule-runs-purge", 24*time.Hour, s.purgeRuns)
+	}
+	return s
+}
+
+// checkName refuses a name already taken by an interval or a calendar job. Called with s.mu held.
+func (s *JobsSlot) checkName(name string) {
+	if s.started {
+		panic(fmt.Sprintf("jobs: %q registered after the scheduler started — register jobs in New", name))
+	}
+	if name == "" || len(name) > 100 {
+		panic(fmt.Sprintf("jobs: %q must be <module>.<job>, at most 100 characters", name))
+	}
+	for _, j := range s.jobs {
+		if j.name == name {
+			panic(fmt.Sprintf("jobs: %q registered twice", name))
+		}
+	}
+	for _, j := range s.calendar {
+		if j.name == name {
+			panic(fmt.Sprintf("jobs: %q registered twice", name))
+		}
+	}
 }
 
 // Every runs fn every interval, from shortly after the API starts until it stops. Call it in a
@@ -63,16 +93,9 @@ func NewJobsSlot(db *sql.DB, lockPrefix string, log *slog.Logger) *JobsSlot {
 func (s *JobsSlot) Every(name string, interval time.Duration, fn func(ctx context.Context) error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.started {
-		panic(fmt.Sprintf("jobs: %q registered after the scheduler started — call d.Jobs.Every in New", name))
-	}
+	s.checkName(name)
 	if interval < time.Second {
 		panic(fmt.Sprintf("jobs: %q runs every %s — the minimum is 1s", name, interval))
-	}
-	for _, j := range s.jobs {
-		if j.name == name {
-			panic(fmt.Sprintf("jobs: %q registered twice", name))
-		}
 	}
 	s.jobs = append(s.jobs, &job{name: name, every: interval, fn: fn})
 }
@@ -90,6 +113,10 @@ func (s *JobsSlot) Start(ctx context.Context) {
 	for _, j := range s.jobs {
 		s.wg.Add(1)
 		go s.loop(ctx, j)
+	}
+	for _, j := range s.calendar {
+		s.wg.Add(1)
+		go s.calendarLoop(ctx, j)
 	}
 }
 

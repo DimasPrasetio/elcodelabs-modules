@@ -58,6 +58,11 @@ jobs:
         run: go install -tags mysql github.com/golang-migrate/migrate/v4/cmd/migrate@v4.18.1 && echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - run: node scripts/check-migrations.mjs "${{ github.event.pull_request.base.sha || github.event.before }}"
       - run: node scripts/migrate.mjs up && node scripts/migrate.mjs down -all && node scripts/migrate.mjs up
+      # The kernel's own MySQL tests: transactions, deadlock retry, tasks, events, schedules.
+      - run: go test ./internal/kernel/...
+        working-directory: apps/api
+        env:
+          KERNEL_TEST_DSN: "root:@tcp(127.0.0.1:3306)/"
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20

@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
+	// Time zone data inside the binary: APP_TIMEZONE works in the minimal image (~450 KB).
+	_ "time/tzdata"
 
 	"github.com/joho/godotenv"
 
@@ -39,19 +42,14 @@ func run() error {
 	}
 	log := logger.New(cfg.Env)
 
-	db, err := database.Open(cfg.DBDSN)
+	// A metrics or tracing kit wraps the driver here: database.Options{Wrap: ...}.
+	db, err := database.OpenWith(cfg.DBDSN, database.Options{})
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	auth := &kernel.AuthSlot{}
-	deps := &kernel.Deps{
-		Config: cfg, DB: db, Log: log, Auth: auth,
-		Authz: kernel.NewAuthzSlot(auth),
-		Jobs:  kernel.NewJobsSlot(db, database.Name(cfg.DBDSN), log),
-		Audit: kernel.NewAuditSlot(auth, log),
-	}
+	deps := kernel.NewDeps(cfg, db, database.Name(cfg.DBDSN), log, nil)
 	srv, err := server.New(deps, func(mux *http.ServeMux) error { return modules.Register(mux, deps) })
 	if err != nil {
 		return err
@@ -61,8 +59,10 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Background jobs start once every module has registered its own. Their context is not the
-	// signal's: on SIGTERM requests drain first, then deps.Jobs.Stop cancels the jobs.
+	// Background work starts once every module has registered its own. Its context is not the
+	// signal's: on SIGTERM tasks stop claiming at once and finish what runs while requests
+	// drain; jobs are cancelled at once (a calendar tick cut short runs again).
+	deps.Tasks.Start(context.Background())
 	deps.Jobs.Start(context.Background())
 
 	errc := make(chan error, 1)
@@ -72,27 +72,46 @@ func run() error {
 	}()
 
 	// 25 s fits inside docker's stop_grace_period (30 s in the prod compose) and lets most
-	// long requests finish; the server's WriteTimeout bounds the rest. Requests stop first, then
-	// jobs — on every way out — then (deferred) the database.
-	stopJobs := func(ctx context.Context) {
-		if err := deps.Jobs.Stop(ctx); err != nil {
-			log.Warn("api: " + err.Error())
-		}
+	// long requests finish; the server's WriteTimeout bounds the rest. A task still running at
+	// the end goes back in the queue for the next container. Requests, tasks, and jobs stop
+	// together — on every way out — then (deferred) the database.
+	stopBackground := func(ctx context.Context) {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if err := deps.Tasks.Stop(ctx); err != nil {
+				log.Warn("api: " + err.Error())
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if err := deps.Jobs.Stop(ctx); err != nil {
+				log.Warn("api: " + err.Error())
+			}
+		}()
+		wg.Wait()
 	}
 
 	select {
 	case err := <-errc:
-		jobsCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		stopJobs(jobsCtx)
+		stopBackground(stopCtx)
 		return err
 	case <-ctx.Done():
 	}
 
+	deps.Tasks.StopClaiming()
 	shutdown, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		stopBackground(shutdown)
+	}()
 	err = srv.Shutdown(shutdown)
-	stopJobs(shutdown)
+	<-stopped
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

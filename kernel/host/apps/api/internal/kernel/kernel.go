@@ -29,7 +29,14 @@ import (
 //	   Deps.Audit (who did what, with an audit module as provider); request.RequestID and
 //	   request.ClientIPFrom for a context; Config.DataDir (DATA_DIR, the one writable folder);
 //	   web: open slot names ("<owner>:<place>"), the "profile:changed" app event
-const Version = 5
+//	6  Deps.Tx (one transaction across modules, retried on deadlock, AfterCommit), Deps.Tasks
+//	   (durable background tasks in kernel_tasks), Deps.Events (durable events between modules),
+//	   calendar schedules (Jobs.Daily/Weekly/Monthly, kernel_schedules), Deps.Clock and
+//	   APP_TIMEZONE, Deps.Scope (company/branch per request; ScopedAuthorizer, Authz.Units),
+//	   AuditEntry.Kind and the record's scope, request.AllowStream (SSE), Deps.HTTP and
+//	   database.OpenWith (kit seams), the kerneltest package;
+//	   web: shared/scope.ts (X-Scope header), the "shell:scope" slot, the "scope:changed" event
+const Version = 6
 
 // Deps is what a module's New receives. A module keeps what it needs from it and never
 // reaches for globals instead.
@@ -45,4 +52,41 @@ type Deps struct {
 	Jobs *JobsSlot
 	// Audit records who changed what; an audit module stores it (see AuditSlot).
 	Audit *AuditSlot
+	// Tx makes changes in several modules commit or roll back together (see TxSlot).
+	Tx *TxSlot
+	// Tasks queues durable background work (see TasksSlot).
+	Tasks *TasksSlot
+	// Events carries what happened from one module to the others (see EventsSlot).
+	Events *EventsSlot
+	// Clock is the time; Location is APP_TIMEZONE (see Clock).
+	Clock Clock
+	// Scope resolves the company and branch a request works in (see ScopeSlot, ScopeFrom).
+	Scope *ScopeSlot
+	// HTTP takes middleware from kits (see HTTPSlot).
+	HTTP *HTTPSlot
+}
+
+// NewDeps builds every slot over db, reading time from clock (nil: the real clock in
+// APP_TIMEZONE). cmd/server calls it; kerneltest.Deps calls it without a database.
+func NewDeps(cfg *config.Config, db *sql.DB, lockPrefix string, log *slog.Logger, clock Clock) *Deps {
+	if clock == nil {
+		clock = NewClock(cfg.Location)
+	}
+	scope := &ScopeSlot{}
+	auth := NewAuthSlot(scope)
+	jobs := NewJobsSlot(db, lockPrefix, clock, log)
+	tx := NewTxSlot(db, log)
+	tasks := NewTasksSlot(db, tx, auth, jobs, clock, log)
+	return &Deps{
+		Config: cfg, DB: db, Log: log, Auth: auth,
+		Authz:  NewAuthzSlot(auth),
+		Jobs:   jobs,
+		Audit:  NewAuditSlot(auth, clock, log),
+		Tx:     tx,
+		Tasks:  tasks,
+		Events: NewEventsSlot(tasks, tx, clock),
+		Clock:  clock,
+		Scope:  scope,
+		HTTP:   &HTTPSlot{},
+	}
 }

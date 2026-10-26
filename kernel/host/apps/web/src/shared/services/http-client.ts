@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getScope } from "@/shared/scope";
 
 export const httpClient = axios.create({
   // Empty = same origin. Proxied by Vite in dev, served by the same container in
@@ -29,6 +30,9 @@ export function onUnauthorized(handler: () => void): () => void {
 
 httpClient.interceptors.request.use((config) => {
   if (authToken) config.headers.Authorization = `Bearer ${authToken}`;
+  // The company/branch this tab works in; the API checks it against the user's placement.
+  const scope = getScope();
+  if (scope) config.headers["X-Scope"] = scope;
   return config;
 });
 
