@@ -3,8 +3,9 @@
 // monorepo-elcodelabs exactly as committed at a release tag (never from a working tree), and
 // writes it to kernel/host — with the kernel references (kernel/reference), a README, and
 // kernel/kernel.lock.json. For whoever maintains the skill; module
-// developers never run it. Commit the result by itself (the catalog check refuses a commit that
-// mixes kernel/ with anything else), after the testbed passes on it.
+// developers never run it. Commit the result by itself, with the catalog it regenerates (the
+// catalog check refuses a commit that mixes kernel/ with anything else), after the testbed
+// passes on it.
 //
 // Usage: node scripts/kernel-sync.mjs --skill <monorepo-elcodelabs folder in a git clone> [--ref <tag|commit>]
 //   --ref defaults to the newest <folder>/kernel/v<N>.<R> release tag in that clone.
@@ -87,7 +88,8 @@ try {
   process.stdout.write(`✓ kernel ${kernel} pinned from ${tag ?? ref} (${commit.slice(0, 7)}): ${files.length} files, ${changed} changed\n`);
   if (!tag) process.stdout.write(`  ! ${commit.slice(0, 7)} has no ${tagBase}${kernel}.<R> tag — commit in the skill (its post-commit hook tags releases) and sync again before committing\n`);
   if (before && before.kernel !== kernel) process.stdout.write(`  kernel ${before.kernel} → ${kernel}: modules may now set requires_kernel ${kernel}\n`);
-  process.stdout.write(`\nNext:\n  npm run testbed\n  git add kernel && git commit -m "kernel: ${kernel} dari ${tag ?? commit.slice(0, 7)}"   # kernel/ only\n`);
+  process.stdout.write(`\nNext:\n  npm run testbed\n  node scripts/catalog.mjs
+  git add kernel CATALOG.md catalog.json && git commit -m "kernel: ${kernel} dari ${tag ?? commit.slice(0, 7)}"   # kernel/ and its catalog only\n`);
 } finally {
   rmSync(work, { recursive: true, force: true });
 }

@@ -107,10 +107,14 @@ function changedPaths(root, commit) {
   return git(root, ["diff-tree", "--no-commit-id", "--name-only", "-r", "--root", commit]).stdout.split("\n").filter(Boolean);
 }
 
+// Generated from kernel/ and modules/: the catalog names the pinned kernel, so a kernel sync
+// regenerates it and it travels with the sync.
+const SYNC_GENERATED = new Set(["CATALOG.md", "catalog.json"]);
+
 /**
  * A kernel change travels alone: every commit after ref (and the uncommitted work) that touches
- * kernel/ touches nothing else, so a kernel update is reviewed — and reverted — on its own.
- * The first commit that brings the pinned kernel in is exempt.
+ * kernel/ touches nothing else but the catalog it regenerates, so a kernel update is reviewed —
+ * and reverted — on its own. The first commit that brings the pinned kernel in is exempt.
  */
 export function checkKernelCommits(root, ref, problem) {
   const commits = git(root, ["rev-list", "--reverse", `${ref}..HEAD`]).stdout.split("\n").filter(Boolean);
@@ -119,7 +123,7 @@ export function checkKernelCommits(root, ref, problem) {
     if (git(root, ["cat-file", "-e", `${parent}:${LOCK_FILE}`]).status !== 0) continue; // bootstrap
     const paths = changedPaths(root, c);
     const kernel = paths.filter((p) => p.startsWith("kernel/"));
-    const other = paths.filter((p) => !p.startsWith("kernel/"));
+    const other = paths.filter((p) => !p.startsWith("kernel/") && !SYNC_GENERATED.has(p));
     if (kernel.length && other.length) {
       const what = c === "WORKTREE" ? "the uncommitted changes" : `commit ${c.slice(0, 7)}`;
       problem("kernel", `kernel-alone: ${what} change${c === "WORKTREE" ? "" : "s"} kernel/ together with ${other.slice(0, 3).join(", ")}${other.length > 3 ? ", …" : ""} — commit the kernel sync by itself`);
