@@ -144,6 +144,57 @@
       "listens": []
     },
     {
+      "id": "customers",
+      "version": "0.1.0",
+      "kind": "fullstack",
+      "title": "Customers",
+      "summary": "A company's customers: code (generated or typed), party type, tax identity as Coretax needs it (NPWP 16, NIK, passport, PKP, VAT collector), billing and shipping addresses with NITKU, contacts, payment days, credit limit, on hold with a reason — deactivated, never deleted. NIK and passport masked, whole only with an access record. Offers CustomerClient (Get, Search, Usable inside a posting's d.Tx, Snapshot for documents).",
+      "when_to_use": [
+        "The app sells to known parties: sales orders, invoices, receivables, deliveries, a POS with member customers."
+      ],
+      "when_not_to_use": [
+        "Suppliers — the suppliers module.",
+        "Receivable balances, credit-limit enforcement, tax invoices — the sales, accounting, and tax modules read from this one through their ports.",
+        "One customer list shared by several companies — this module keeps each company's own (decision K1 of its plan)."
+      ],
+      "stacks": [
+        "go"
+      ],
+      "requires_kernel": 6,
+      "provides": {
+        "contracts": [
+          "CustomerClient"
+        ],
+        "kernel": []
+      },
+      "permissions": [
+        "customers.read",
+        "customers.manage",
+        "customers.credit",
+        "customers.sensitive"
+      ],
+      "ports": [],
+      "ui": [
+        "ui-core",
+        "ui-data",
+        "ui-forms",
+        "ui-feedback"
+      ],
+      "go_kits": [
+        "money",
+        "taxid"
+      ],
+      "owns_tables": [
+        "cust_customers",
+        "cust_addresses",
+        "cust_contacts",
+        "cust_settings"
+      ],
+      "scoped": true,
+      "emits": [],
+      "listens": []
+    },
+    {
       "id": "docstate",
       "version": "0.1.0",
       "kind": "gokit",
@@ -548,6 +599,33 @@
         "settings"
       ],
       "scoped": true,
+      "emits": [],
+      "listens": []
+    },
+    {
+      "id": "taxid",
+      "version": "0.1.0",
+      "kind": "gokit",
+      "title": "Tax IDs (Go kit)",
+      "summary": "Indonesian tax identities: the 16-digit NPWP (old 15-digit ones normalized with a leading 0), the NIK as an individual's NPWP (length, region, birth date), the 22-digit NITKU of a place of business, passport numbers, an unofficial NPWP check digit as a warning, and masking for display. Formats only — registration is DJP's to confirm.",
+      "when_to_use": [
+        "A module stores or checks an NPWP, NIK, NITKU, or passport number — customers, suppliers, employees, the company profile."
+      ],
+      "when_not_to_use": [
+        "Confirming that a number is registered or that a party is a PKP — only Coretax/DJP can.",
+        "Tax calculations (PPN, PPh) — a tax module's."
+      ],
+      "stacks": [
+        "go"
+      ],
+      "requires_kernel": 6,
+      "provides": {},
+      "permissions": [],
+      "ports": [],
+      "ui": [],
+      "go_kits": [],
+      "owns_tables": [],
+      "scoped": false,
       "emits": [],
       "listens": []
     },
