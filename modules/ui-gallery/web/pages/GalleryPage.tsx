@@ -42,6 +42,8 @@ import type { KeyValueRow } from "@/shared/components/ui/key-value-editor";
 import { LineItemsEditor } from "@/shared/components/ui/line-items-editor";
 import { MultiToggle } from "@/shared/components/ui/multi-toggle";
 import { PasswordInput } from "@/shared/components/ui/password-input";
+import { DigitsInput } from "@/shared/components/ui/digits-input";
+import { AddressFields, EMPTY_ADDRESS } from "@/shared/components/ui/address-fields";
 import { SearchSelect } from "@/shared/components/ui/search-select";
 import type { SelectOption, SelectValue } from "@/shared/components/ui/select-parts";
 import { Segmented } from "@/shared/components/ui/segmented";
@@ -116,6 +118,8 @@ export default function GalleryPage() {
   const [sheet, setSheet] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [reason, setReason] = useState(false);
+  const [idNumber, setIdNumber] = useState("3201234567890001");
+  const [address, setAddress] = useState({ ...EMPTY_ADDRESS, line: "Jl. Asia Afrika No. 8", city: "Kota Bandung", province: "Jawa Barat", postal_code: "40111" });
 
   const columns: DataTableColumn<Order>[] = [
     { header: "Nomor", sortKey: "number", render: (o) => <DocNumber value={o.number} copyable /> },
@@ -234,6 +238,9 @@ export default function GalleryPage() {
           <FormField label="Kata sandi">
             <PasswordInput defaultValue="rahasia123" />
           </FormField>
+          <FormField label="Nomor identitas" hint="Hanya angka; dikelompokkan saat tidak diketik.">
+            <DigitsInput value={idNumber} onChange={setIdNumber} maxDigits={16} groups={[4, 4, 4, 4]} />
+          </FormField>
           <FormField label="Pelanggan (cari)">
             <SearchSelect options={CUSTOMERS} value={customer} onChange={setCustomer} allowClear />
           </FormField>
@@ -294,6 +301,20 @@ export default function GalleryPage() {
             ]}
           />
         </Row>
+      </Section>
+
+      <Section title="Alamat">
+        <AddressFields
+          value={address}
+          onChange={setAddress}
+          countries={[
+            { value: "ID", label: "Indonesia" },
+            { value: "SG", label: "Singapura" },
+            { value: "MY", label: "Malaysia" },
+          ]}
+          errors={address.postal_code ? {} : { postal_code: "Kode pos wajib diisi" }}
+          required={["line", "postal_code"]}
+        />
       </Section>
 
       <Section title="Status dan pesan">
