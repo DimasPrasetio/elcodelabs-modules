@@ -160,7 +160,7 @@ export default function CustomerPage() {
                   { label: "Negara", value: c.is_foreign ? countryLabel(c.country) : "Indonesia" },
                   { label: TAX_ID_LABEL[c.tax_id_kind], value: taxValue },
                   { label: "PKP", value: c.is_pkp ? "Ya" : "Bukan PKP" },
-                  { label: "Pemungut PPN", value: COLLECTOR_LABEL[c.vat_collector] },
+                  ...(c.is_foreign ? [] : [{ label: "Pemungut PPN", value: COLLECTOR_LABEL[c.vat_collector] }]),
                   { label: "Email", value: c.email },
                   { label: "Telepon", value: c.phone },
                   { label: "Catatan", value: c.notes, wide: true },

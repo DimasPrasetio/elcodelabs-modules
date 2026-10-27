@@ -37,12 +37,15 @@ type Line struct {
 
 // Invoice is a document with a lifecycle.
 type Invoice struct {
-	ID       int64
-	BranchID int64
-	Date     kernel.Date
-	Number   string // "" until posted (an amendment carries its own from the start)
-	Discount money.Amount
-	Total    money.Amount
+	ID            int64
+	BranchID      int64
+	CustomerID    int64  // 0: none
+	CustomerName  string // copied when posted
+	CustomerTaxID string
+	Date          kernel.Date
+	Number        string // "" until posted (an amendment carries its own from the start)
+	Discount      money.Amount
+	Total         money.Amount
 	docstate.Fields
 	Lines []Line
 }
@@ -52,6 +55,7 @@ type Repository interface {
 	Get(ctx context.Context, id int64, forUpdate bool) (Invoice, error)
 	UpdateDraft(ctx context.Context, inv Invoice) (int64, error)
 	MarkPosted(ctx context.Context, id int64, number string, at time.Time, by int64) (int64, error)
+	SetCustomerSnapshot(ctx context.Context, id int64, name, taxID string) error
 	MarkCancelled(ctx context.Context, id int64, reason string, at time.Time, by int64) (int64, error)
 	DeleteDraft(ctx context.Context, id int64) (int64, error)
 	AddStock(ctx context.Context, sku string, qty money.Qty) error
@@ -60,16 +64,17 @@ type Repository interface {
 }
 
 type Service struct {
-	repo    Repository
-	numbers ports.Numbers
-	periods ports.Periods
-	d       *kernel.Deps
+	repo      Repository
+	numbers   ports.Numbers
+	periods   ports.Periods
+	customers ports.Customers // nil: invoices have no customer
+	d         *kernel.Deps
 }
 
-func NewService(repo Repository, numbers ports.Numbers, periods ports.Periods, d *kernel.Deps) *Service {
+func NewService(repo Repository, numbers ports.Numbers, periods ports.Periods, customers ports.Customers, d *kernel.Deps) *Service {
 	numbers.Declare(DocType, "Faktur fixture", ports.NumberFormat{Pattern: "INV/{YYYY}/{MM}/{SEQ:4}", Reset: "monthly"})
 	periods.Declare(Area, "Penjualan")
-	return &Service{repo: repo, numbers: numbers, periods: periods, d: d}
+	return &Service{repo: repo, numbers: numbers, periods: periods, customers: customers, d: d}
 }
 
 func (s *Service) actor(ctx context.Context) int64 {
@@ -164,6 +169,18 @@ func (s *Service) Post(ctx context.Context, id int64, hold time.Duration, failAf
 		if err := s.periods.EnsureOpen(ctx, Area, inv.Date); err != nil {
 			return err
 		}
+		if inv.CustomerID != 0 && s.customers != nil {
+			if err := s.customers.Usable(ctx, inv.CustomerID); err != nil {
+				return err
+			}
+			snap, err := s.customers.Snapshot(ctx, inv.CustomerID)
+			if err != nil {
+				return err
+			}
+			if err := s.repo.SetCustomerSnapshot(ctx, id, snap.Name, snap.TaxID); err != nil {
+				return err
+			}
+		}
 		for _, l := range inv.Lines {
 			ok, err := s.repo.TakeStock(ctx, l.SKU, l.Qty)
 			if err != nil {
@@ -226,6 +243,18 @@ func (s *Service) Cancel(ctx context.Context, id int64, reason string) (Invoice,
 		}
 		if err := s.periods.EnsureOpen(ctx, Area, inv.Date); err != nil {
 			return err
+		}
+		if inv.CustomerID != 0 && s.customers != nil {
+			if err := s.customers.Usable(ctx, inv.CustomerID); err != nil {
+				return err
+			}
+			snap, err := s.customers.Snapshot(ctx, inv.CustomerID)
+			if err != nil {
+				return err
+			}
+			if err := s.repo.SetCustomerSnapshot(ctx, id, snap.Name, snap.TaxID); err != nil {
+				return err
+			}
 		}
 		for _, l := range inv.Lines {
 			if err := s.repo.ReturnStock(ctx, l.SKU, l.Qty); err != nil {

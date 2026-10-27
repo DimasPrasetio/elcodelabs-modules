@@ -603,6 +603,56 @@
       "listens": []
     },
     {
+      "id": "suppliers",
+      "version": "0.1.0",
+      "kind": "fullstack",
+      "title": "Suppliers",
+      "summary": "A company's suppliers: code (generated or typed), party type, tax identity as Coretax needs it (NPWP 16, NIK, passport, PKP), addresses with NITKU, bank accounts (changed only with suppliers.sensitive, every change a security record, a warning when the holder is someone else), contacts, payment days, on hold with a reason — deactivated, never deleted. NIK, passport, and account numbers masked, whole only with an access record. Offers SupplierClient (Get, Search, Usable inside a posting's d.Tx, Snapshot, DefaultBankAccount).",
+      "when_to_use": [
+        "The app buys from known parties: purchase orders, bills, payables, payments, goods receipts."
+      ],
+      "when_not_to_use": [
+        "Customers — the customers module.",
+        "Payables, withholding (PPh 23/4(2)/21/26) and tax certificates (SKB, PP 55/PP 20/2026) — the purchasing, accounting, and tax modules read from this one through their ports.",
+        "One supplier list shared by several companies — this module keeps each company's own."
+      ],
+      "stacks": [
+        "go"
+      ],
+      "requires_kernel": 6,
+      "provides": {
+        "contracts": [
+          "SupplierClient"
+        ],
+        "kernel": []
+      },
+      "permissions": [
+        "suppliers.read",
+        "suppliers.manage",
+        "suppliers.sensitive"
+      ],
+      "ports": [],
+      "ui": [
+        "ui-core",
+        "ui-data",
+        "ui-forms",
+        "ui-feedback"
+      ],
+      "go_kits": [
+        "taxid"
+      ],
+      "owns_tables": [
+        "supp_suppliers",
+        "supp_addresses",
+        "supp_bank_accounts",
+        "supp_contacts",
+        "supp_settings"
+      ],
+      "scoped": true,
+      "emits": [],
+      "listens": []
+    },
+    {
       "id": "taxid",
       "version": "0.1.0",
       "kind": "gokit",

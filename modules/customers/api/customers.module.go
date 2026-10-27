@@ -80,7 +80,9 @@ func (c client) Search(ctx context.Context, q string, limit int) ([]contracts.Cu
 	return out, nil
 }
 
-func (c client) Usable(ctx context.Context, id int64) error { return contractErr(c.svc.Usable(ctx, id)) }
+func (c client) Usable(ctx context.Context, id int64) error {
+	return contractErr(c.svc.Usable(ctx, id))
+}
 
 func (c client) Snapshot(ctx context.Context, id, addressID int64) (contracts.Snapshot, error) {
 	cu, a, err := c.svc.Snapshot(ctx, id, addressID)

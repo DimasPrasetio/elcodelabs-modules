@@ -1,7 +1,7 @@
 # Rencana — Modul `customers` dan `suppliers`, Go kit `taxid`
 
-> Disusun 27 Oktober 2026. **K1–K9 disetujui sesuai rekomendasi** (27 Oktober 2026); rencana
-> berlaku setelah pull request-nya di-review dan digabung. Belum ada kode.
+> Disusun 27 Oktober 2026. **K1–K9 disetujui sesuai rekomendasi** (27 Oktober 2026);
+> **dibangun** hari yang sama (lihat "Hasil pembangunan" di akhir).
 > Dasar: diskusi pemisahan `partners` menjadi dua modul (alasan di "Mengapa dua modul"), riset
 > internet atas aturan Indonesia dan praktik ERP (sumber di akhir), dan analisis arsitektur
 > library: kernel 6, aturan di AGENTS.md, modul `numbering`, `organization`, `settings`.
@@ -455,3 +455,43 @@ menyimpan `customer_id` sebagai ID primitif ditambah kolom snapshot di dokumenny
 **Belum terkonfirmasi** (tidak menjadi dasar keputusan keras): algoritma check digit NPWP resmi;
 batas akhir penerimaan NPWP 15 digit; status NIK sebagai data pribadi spesifik; daftar kode bank
 resmi BI; berlakunya kenaikan tarif PPh 23 tanpa NPWP di 2026.
+
+## Hasil pembangunan
+
+Dibangun 27 Oktober 2026 di branch `customers-suppliers`, sesuai K1–K9.
+
+| Rilis | Isi |
+|---|---|
+| `ui-forms` 0.2.0, `ui-gallery` 0.1.1 | `DigitsInput`, `AddressFields` (generik), dengan contoh di galeri |
+| `taxid` 0.1.0 | `NormalizeNPWP`, `CheckNIK`, `CheckNITKU`, `CheckPassport`, `SuspectNPWP`, `Mask` |
+| `customers` 0.1.0 | Sesuai rancangan: tabel `cust_*`, `CustomerClient`, halaman daftar dan detail |
+| `suppliers` 0.1.0 | Sesuai rancangan: tabel `supp_*` dengan rekening bank, `SupplierClient` dengan `DefaultBankAccount` |
+| fixture `fixinvoice` 0.2.0 | Port opsional `Customers` (adapter ke `customers`): `Usable` dan `Snapshot` di dalam `d.Tx` posting |
+
+**Penyesuaian saat dibangun.**
+
+- **Nama metode validasi domain `Clean`, bukan `Prepare`.** Aturan `tx-aware` membaca `.Prepare(` sebagai
+  pernyataan SQL.
+- **`suppliers` tanpa izin `credit`.** Termin pemasok diubah dengan `suppliers.manage`, dan
+  perubahannya dicatat sebagai audit `change` dengan nilai sebelum dan sesudah. Batas kredit
+  hanya milik pelanggan, sesuai plan.
+- **Reveal pemasok mencakup rekening.** Satu pembacaan yang diaudit menampilkan identitas pajak
+  dan semua nomor rekening utuh. Mengubah rekening dimulai dari nomor utuhnya.
+- **`DefaultBankAccount` mencatat audit `access`.** Rekening utuh yang dibaca modul pembayaran ikut
+  tercatat.
+- **Endpoint `GET /lookup?q=`.** Untuk pemilih di halaman modul lain.
+
+**Bukti.**
+
+- Tes unit di `customers` dan `suppliers` (`application`) dan `taxid`: lolos.
+- Skenario testbed `documents` diperluas: kode otomatis, NPWP 15→16, NPWP ganda (409 lalu
+  konfirmasi), NIK dan NITKU ditolak dengan pesan per kolom, NIK tersamar dan reveal ber-audit,
+  staf tanpa `credit`/`sensitive` ditolak, faktur fixture untuk pelanggan ditahan atau nonaktif
+  ditolak (409) lewat port, rekening dijaga dan diaudit tanpa nomor utuh, isolasi perusahaan.
+- Testbed lengkap: `All testbed checks passed: 420 checks.`
+- Setiap halaman dilihat di sandbox: daftar, detail, form, reveal NIK, rekening pemasok.
+
+**Batasan yang diterima** (juga di STATUS.md › Known limits):
+- data per perusahaan;
+- check digit NPWP tidak resmi;
+- alamat berupa teks bebas.
