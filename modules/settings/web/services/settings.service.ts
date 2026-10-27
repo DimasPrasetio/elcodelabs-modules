@@ -4,8 +4,8 @@ import type { Company, CompanyValues } from "@/modules/settings/types/settings";
 
 const BASE = "/api/v1/settings/company";
 
-/** The logo's address; ?v= changes after an upload so the browser does not show the old one. */
-export const logoUrl = (version: number) => `${BASE}/logo?v=${version}`;
+/** A company's logo; ?v= changes after an upload so the browser does not show the old one. */
+export const logoUrl = (companyId: number, version: number) => `${BASE}/logo?company=${companyId}&v=${version}`;
 
 export async function fetchCompany(signal?: AbortSignal): Promise<Company> {
   const { data } = await httpClient.get<ApiSuccess<Company>>(BASE, { signal });

@@ -37,8 +37,13 @@ type UserClient interface {
 	GetByID(ctx context.Context, id int64) (User, error)
 	// GetByEmail returns the user with email (case-insensitive), or ErrNotFound.
 	GetByEmail(ctx context.Context, email string) (User, error)
-	// Search returns up to limit users whose name or email contains q, newest first.
+	// Search returns up to limit users whose name or email contains q, newest first — among
+	// every user, whatever company the request works in.
 	Search(ctx context.Context, q string, limit int) ([]User, error)
+	// SearchAmong is Search among ids only (e.g. the people placed in one company).
+	SearchAmong(ctx context.Context, ids []int64, q string, limit int) ([]User, error)
+	// IDs returns every user's ID.
+	IDs(ctx context.Context) ([]int64, error)
 	// GetCredentialsByEmail returns the credentials for email (case-insensitive), or ErrNotFound.
 	GetCredentialsByEmail(ctx context.Context, email string) (Credentials, error)
 	// SetPassword replaces the user's password and records when (PasswordChangedAt), which ends

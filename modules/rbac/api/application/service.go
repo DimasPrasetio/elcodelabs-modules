@@ -84,14 +84,15 @@ type Member struct {
 
 // Service is the rbac module's use cases.
 type Service struct {
-	repo    Repository
-	tx      Transactor
-	scopes  Scopes
-	users   ports.UserDirectory
-	catalog func() []kernel.Permission
-	audit   Auditor
-	ttl     time.Duration
-	now     func() time.Time
+	repo       Repository
+	tx         Transactor
+	scopes     Scopes
+	users      ports.UserDirectory
+	placements ports.Placements // nil: no organization module
+	catalog    func() []kernel.Permission
+	audit      Auditor
+	ttl        time.Duration
+	now        func() time.Time
 
 	mu    sync.Mutex
 	cache map[grantKey]cached
@@ -173,6 +174,15 @@ var errBeyondOwn = apperror.Forbidden("Anda hanya dapat mengelola izin dan peran
 // manager.
 func at(grants []Grant, company, branch int64) map[string]bool {
 	out := map[string]bool{}
+	// An Administrator across the home company administers the whole installation: companies are
+	// made and run from there (an organization module's rule), so no company — not even one a
+	// colleague created — is beyond them. They still enter only where they are placed.
+	for _, g := range grants {
+		if g.CompanyID == kernel.DefaultCompany && g.BranchID == 0 && g.Permission == domain.Wildcard {
+			out[domain.Wildcard] = true
+			return out
+		}
+	}
 	for _, g := range grants {
 		if g.CompanyID == company && (g.BranchID == 0 || (branch != 0 && g.BranchID == branch)) {
 			out[g.Permission] = true
@@ -225,11 +235,17 @@ func (s *Service) mayEditRole(ctx context.Context, actor, roleID int64, perms []
 	return true, nil
 }
 
+// UsePlacements turns on placement-aware Covers and member search — set once, while the app is
+// assembled.
+func (s *Service) UsePlacements(p ports.Placements) { s.placements = p }
+
 // Covers reports whether actor may act on target's account (kernel Authorizer.Covers: reset a
-// password, deactivate). An account is one across every company and branch, so acting on it is a
-// company-wide act: actor needs, company-wide, every permission target holds, wherever target
-// holds it — and, for an account holding nothing, some company-wide role in the active company
-// (holding a role in one branch never reaches accounts). A lookup failure denies.
+// password, deactivate). The account belongs everywhere it holds a role and — with placements —
+// everywhere it works; with neither, to the home company as a whole. In every one of those
+// places actor needs a standing of their own (some grant reaching it) and everything target holds
+// there: across a company, company-wide; in one branch, in that branch. So one company never
+// reaches an account another company shares, and a branch administrator reaches only accounts
+// that live in their branch. A lookup failure denies.
 func (s *Service) Covers(ctx context.Context, actor, target int64) bool {
 	if actor == target {
 		return true
@@ -242,15 +258,52 @@ func (s *Service) Covers(ctx context.Context, actor, target int64) bool {
 	if err != nil {
 		return false
 	}
-	if len(theirs) == 0 {
-		return len(at(mine, company(ctx), 0)) > 0
+	places, err := s.belongs(ctx, target, theirs)
+	if err != nil {
+		return false
 	}
-	for _, g := range theirs {
-		if !domain.Grants(at(mine, g.CompanyID, 0), g.Permission) {
+	for _, p := range places {
+		held := at(mine, p[0], p[1])
+		if len(held) == 0 {
 			return false
+		}
+		for _, g := range theirs {
+			if g.CompanyID == p[0] && (p[1] == 0 || g.BranchID == p[1]) && !domain.Grants(held, g.Permission) {
+				return false
+			}
 		}
 	}
 	return true
+}
+
+// belongs is where an account belongs: the units of its grants, its workplaces (with placements
+// wired), or — with neither — the home company as a whole. Placements not wired yet in an app
+// with several companies thus leave no company another's account.
+func (s *Service) belongs(ctx context.Context, target int64, theirs []Grant) ([][2]int64, error) {
+	seen := map[[2]int64]bool{}
+	var out [][2]int64
+	add := func(c, b int64) {
+		if !seen[[2]int64{c, b}] {
+			seen[[2]int64{c, b}] = true
+			out = append(out, [2]int64{c, b})
+		}
+	}
+	for _, g := range theirs {
+		add(g.CompanyID, g.BranchID)
+	}
+	if s.placements != nil {
+		places, err := s.placements.PlacesOf(ctx, target)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range places {
+			add(p.CompanyID, p.BranchID)
+		}
+	}
+	if len(out) == 0 {
+		add(kernel.DefaultCompany, 0)
+	}
+	return out, nil
 }
 
 func (s *Service) CreateRole(ctx context.Context, actor int64, in RoleInput) (domain.Role, error) {
@@ -478,8 +531,51 @@ func (s *Service) RemoveMember(ctx context.Context, actor, roleID, userID, branc
 }
 
 // SearchUsers finds users to give a role to.
+// With placements, only people placed in the active company (a role there would give them
+// nothing to do anyway, and other companies' people are not listed).
 func (s *Service) SearchUsers(ctx context.Context, q string) ([]ports.User, error) {
-	return s.users.Search(ctx, strings.TrimSpace(q), 10)
+	if s.placements == nil {
+		return s.users.Search(ctx, strings.TrimSpace(q), 10)
+	}
+	placed, err := s.placements.PlacedUserIDs(ctx, company(ctx))
+	if err != nil {
+		return nil, err
+	}
+	here := make(map[int64]bool, len(placed))
+	for _, id := range placed {
+		here[id] = true
+	}
+	found, err := s.users.Search(ctx, strings.TrimSpace(q), 50)
+	if err != nil {
+		return nil, err
+	}
+	out := []ports.User{}
+	for _, u := range found {
+		if here[u.ID] && len(out) < 10 {
+			out = append(out, u)
+		}
+	}
+	return out, nil
+}
+
+// AppointFounder makes the creator of a new company its Administrator across it — the reaction
+// to organization.company.created. Repeating it changes nothing.
+func (s *Service) AppointFounder(ctx context.Context, companyID, userID int64) error {
+	if companyID < 1 || userID < 1 {
+		return fmt.Errorf("rbac: company %d founder %d: not a company and a user", companyID, userID)
+	}
+	adminID, err := s.repo.RoleIDByName(ctx, domain.AdminRole)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.AddMember(ctx, companyID, 0, adminID, userID); err != nil {
+		return err
+	}
+	s.changed(ctx)
+	// Recorded in the new company: that is where the Administrator now acts.
+	s.audit.Record(kernel.WithScope(ctx, kernel.Scope{CompanyID: companyID}), kernel.AuditEntry{Kind: kernel.AuditSecurity, Module: "rbac", Action: "role.member_added", Target: fmt.Sprintf("user:%d", userID),
+		Summary: "Memberi peran Administrator kepada pembuat perusahaan", Data: map[string]any{"role_id": adminID, "role": domain.AdminRole, "company_id": companyID, "branch_id": 0}})
+	return nil
 }
 
 // grants returns what the user holds in every company, cached for a short time; every change to

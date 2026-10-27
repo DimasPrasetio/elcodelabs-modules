@@ -35,7 +35,8 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!company.data) return;
     setCurrent(company.data);
-    const { has_logo: _l, logo_upload: _u, ...rest } = company.data;
+    // The time zone is no longer edited here, but goes back as it was (see contracts.Company).
+    const { company_id: _c, has_logo: _l, logo_upload: _u, ...rest } = company.data;
     setValues(rest);
   }, [company.data]);
 
@@ -85,15 +86,7 @@ export default function SettingsPage() {
             <FormField label="Email" error={errors.email}>
               <Input type="email" value={values.email} onChange={set("email")} />
             </FormField>
-            <FormField label="Zona waktu" error={errors.timezone} hint="Menentukan batas hari untuk laporan.">
-              <Input value={values.timezone} onChange={set("timezone")} list="settings-timezones" />
-            </FormField>
           </FieldGrid>
-          <datalist id="settings-timezones">
-            <option value="Asia/Jakarta">WIB</option>
-            <option value="Asia/Makassar">WITA</option>
-            <option value="Asia/Jayapura">WIT</option>
-          </datalist>
           <FormField label="Alamat" error={errors.address}>
             <Textarea value={values.address} onChange={set("address")} rows={3} />
           </FormField>

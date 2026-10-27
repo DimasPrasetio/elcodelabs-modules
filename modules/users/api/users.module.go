@@ -15,6 +15,7 @@ import (
 	"__GO_MODULE__/internal/modules/users/application"
 	"__GO_MODULE__/internal/modules/users/contracts"
 	"__GO_MODULE__/internal/modules/users/infrastructure"
+	"__GO_MODULE__/internal/modules/users/ports"
 	"__GO_MODULE__/internal/modules/users/presentation"
 	"__GO_MODULE__/internal/shared/apperror"
 	"__GO_MODULE__/internal/shared/pagination"
@@ -35,7 +36,7 @@ func New(d *kernel.Deps) (*Module, error) {
 		kernel.Permission{Name: presentation.PermRead, Module: "users", Description: "Melihat daftar pengguna"},
 		kernel.Permission{Name: presentation.PermManage, Module: "users", Description: "Menambah, mengubah, dan menonaktifkan pengguna"},
 	)
-	svc := application.NewService(infrastructure.NewRepository(d.Tx), infrastructure.BcryptHasher{}, d.Authz, d.Audit)
+	svc := application.NewService(infrastructure.NewRepository(d.Tx), d.Tx, infrastructure.BcryptHasher{}, d.Authz, d.Audit)
 	m := &Module{svc: svc, handler: presentation.NewHandler(svc, d.Auth, d.Authz)}
 
 	email, password := config.Get("USERS_BOOTSTRAP_EMAIL", ""), config.Get("USERS_BOOTSTRAP_PASSWORD", "")
@@ -53,6 +54,10 @@ func New(d *kernel.Deps) (*Module, error) {
 	}
 	return m, nil
 }
+
+// UsePlacements wires the optional Placements port — from register.go.late, once the provider
+// (an organization module, which itself needs users) is built.
+func (m *Module) UsePlacements(p ports.Placements) { m.svc.UsePlacements(p) }
 
 // Routes mounts /api/v1/users.
 func (m *Module) Routes(mux *http.ServeMux) { m.handler.Routes(mux) }
@@ -89,6 +94,23 @@ func (c client) Search(ctx context.Context, q string, limit int) ([]contracts.Us
 	}
 	return out, nil
 }
+
+func (c client) SearchAmong(ctx context.Context, ids []int64, q string, limit int) ([]contracts.User, error) {
+	if len(ids) == 0 {
+		return []contracts.User{}, nil
+	}
+	users, _, err := c.svc.ListAmong(ctx, ids, q, pagination.Params{Page: 1, Limit: min(max(limit, 1), pagination.MaxLimit)})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]contracts.User, len(users))
+	for i, u := range users {
+		out[i] = contracts.User{ID: u.ID, Name: u.Name, Email: u.Email, IsActive: u.IsActive}
+	}
+	return out, nil
+}
+
+func (c client) IDs(ctx context.Context) ([]int64, error) { return c.svc.IDs(ctx) }
 
 func (c client) SetPassword(ctx context.Context, id int64, password string) error {
 	err := c.svc.SetPassword(ctx, id, password)

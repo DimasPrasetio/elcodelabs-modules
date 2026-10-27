@@ -45,6 +45,24 @@ func (r *Repository) List(ctx context.Context, search string, p pagination.Param
 	return users, total, nil
 }
 
+func (r *Repository) ListIn(ctx context.Context, ids []int64, search string, p pagination.Params) ([]domain.User, int64, error) {
+	rows, err := r.q(ctx).ListUsersIn(ctx, sqlc.ListUsersInParams{Ids: ids, Search: search, Limit: int32(p.Limit), Offset: int32(p.Offset())})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := r.q(ctx).CountUsersIn(ctx, sqlc.CountUsersInParams{Ids: ids, Search: search})
+	if err != nil {
+		return nil, 0, err
+	}
+	users := make([]domain.User, len(rows))
+	for i, row := range rows {
+		users[i] = domain.User{ID: row.ID, Name: row.Name, Email: row.Email, IsActive: row.IsActive, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	}
+	return users, total, nil
+}
+
+func (r *Repository) IDs(ctx context.Context) ([]int64, error) { return r.q(ctx).UserIDs(ctx) }
+
 func (r *Repository) CountAll(ctx context.Context) (int64, error) {
 	return r.q(ctx).CountAllUsers(ctx)
 }

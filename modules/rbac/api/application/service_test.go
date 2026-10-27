@@ -173,7 +173,15 @@ func (d directory) FindByEmail(_ context.Context, email string) (ports.User, err
 	return ports.User{}, ports.ErrUserNotFound
 }
 
-func (d directory) Search(context.Context, string, int) ([]ports.User, error) { return nil, nil }
+func (d directory) Search(_ context.Context, q string, _ int) ([]ports.User, error) {
+	var out []ports.User
+	for _, u := range d {
+		if strings.Contains(u.Email, q) || strings.Contains(u.Name, q) {
+			out = append(out, u)
+		}
+	}
+	return out, nil
+}
 
 var catalog = func() []kernel.Permission {
 	return []kernel.Permission{{Name: "rbac.manage"}, {Name: "users.manage"}, {Name: "users.read"}}
@@ -452,8 +460,8 @@ func TestBranchRoleReachesOnlyItsBranch(t *testing.T) {
 	if u, _ := svc.Units(in(1, 0), admin, "users.read"); !u.AllBranches {
 		t.Fatalf("a company-wide administrator reaches every branch: %+v", u)
 	}
-	if svc.Can(in(2, 0), admin, "users.read") {
-		t.Fatal("company 1's administrator holds nothing in company 2")
+	if !svc.Can(in(2, 0), admin, "users.read") || svc.Can(in(2, 0), 2, "users.read") {
+		t.Fatal("the home company's Administrator administers every company; a role in company 1 reaches only company 1")
 	}
 }
 
@@ -481,17 +489,22 @@ func TestBranchAdministratorIsNoCompanyAdministrator(t *testing.T) {
 }
 
 func TestAnAccountIsCoveredInEveryCompany(t *testing.T) {
-	svc, repo := setupWithAdmin(t)                       // user 1: Administrator of company 1
+	svc, repo := setupWithAdmin(t)                       // user 1: Administrator of company 1 (home)
 	_ = repo.AddMember(context.Background(), 2, 0, 1, 2) // user 2: Administrator of company 2 only
+	_ = repo.AddMember(context.Background(), 3, 0, 1, 3) // user 3: Administrator of company 3 only
+	svc = fresh(repo)
+	if svc.Covers(in(2, 0), 2, 3) || svc.Covers(in(3, 0), 3, 2) {
+		t.Fatal("one company's administrator may act on the account of another's")
+	}
 	if svc.Covers(in(2, 0), 2, admin) {
-		t.Fatal("company 2's administrator may act on the account of company 1's administrator")
+		t.Fatal("company 2's administrator may act on the account of the home company's")
 	}
-	if svc.Covers(in(1, 0), admin, 2) {
-		t.Fatal("company 1's administrator may act on the account of company 2's administrator")
+	if !svc.Covers(in(1, 0), admin, 2) || !svc.Covers(in(1, 0), admin, 3) {
+		t.Fatal("the home company's Administrator administers the installation")
 	}
-	_ = repo.AddMember(context.Background(), 2, 0, 1, admin)
-	if !fresh(repo).Covers(in(1, 0), admin, 2) {
-		t.Fatal("an administrator of both companies covers everyone")
+	_ = repo.AddMember(context.Background(), 3, 0, 1, 2)
+	if !fresh(repo).Covers(in(2, 0), 2, 3) {
+		t.Fatal("an administrator of both companies covers the other's administrator")
 	}
 }
 
@@ -502,15 +515,18 @@ func TestARoleChangeNeedsEveryCompanyItReaches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = repo.AddMember(ctx, 2, 0, reader.ID, 3) // the role has a member in company 2
-	if _, err := svc.UpdateRole(ctx, admin, reader.ID, application.RoleInput{Name: "Pembaca", Permissions: []string{"users.manage"}}); status(t, err) != http.StatusForbidden {
-		t.Fatalf("a change reaching company 2, by someone with no rights there: %v", err)
+	_ = repo.AddMember(ctx, 2, 0, 1, 2)         // Ana: Administrator of company 2 only
+	_ = repo.AddMember(ctx, 3, 0, reader.ID, 3) // the role has a member in company 3
+	svc = fresh(repo)
+	inTwo := in(2, 0)
+	if _, err := svc.UpdateRole(inTwo, 2, reader.ID, application.RoleInput{Name: "Pembaca", Permissions: []string{"users.manage"}}); status(t, err) != http.StatusForbidden {
+		t.Fatalf("a change reaching company 3, by someone with no rights there: %v", err)
 	}
-	if err := svc.DeleteRole(ctx, admin, reader.ID); status(t, err) != http.StatusForbidden {
-		t.Fatalf("a deletion reaching company 2, by someone with no rights there: %v", err)
+	if err := svc.DeleteRole(inTwo, 2, reader.ID); status(t, err) != http.StatusForbidden {
+		t.Fatalf("a deletion reaching company 3, by someone with no rights there: %v", err)
 	}
-	_ = repo.AddMember(ctx, 2, 0, 1, admin)
-	if _, err := fresh(repo).UpdateRole(ctx, admin, reader.ID, application.RoleInput{Name: "Pembaca", Permissions: []string{"users.manage"}}); err != nil {
+	_ = repo.AddMember(ctx, 3, 0, 1, 2)
+	if _, err := fresh(repo).UpdateRole(inTwo, 2, reader.ID, application.RoleInput{Name: "Pembaca", Permissions: []string{"users.manage"}}); err != nil {
 		t.Fatalf("an administrator of both companies may: %v", err)
 	}
 }
@@ -559,3 +575,108 @@ func TestTheLastActiveAdministratorStays(t *testing.T) {
 		t.Fatalf("removing the deactivated one: %v", err)
 	}
 }
+
+// placements is a fake organization module: user → companies.
+type placements map[int64][]int64
+
+func (p placements) PlacesOf(_ context.Context, user int64) ([]ports.Workplace, error) {
+	var out []ports.Workplace
+	for _, c := range p[user] {
+		out = append(out, ports.Workplace{CompanyID: c})
+	}
+	return out, nil
+}
+
+func (p placements) PlacedUserIDs(_ context.Context, company int64) ([]int64, error) {
+	var out []int64
+	for u, cs := range p {
+		for _, c := range cs {
+			if c == company {
+				out = append(out, u)
+			}
+		}
+	}
+	return out, nil
+}
+
+func TestWithPlacementsARolelessAccountBelongsWhereItIsPlaced(t *testing.T) {
+	svc, repo := setupWithAdmin(t)                       // user 1: Administrator of company 1
+	_ = repo.AddMember(context.Background(), 2, 0, 1, 2) // user 2: Administrator of company 2 only
+	svc = fresh(repo)
+	svc.UsePlacements(placements{1: {1, 2}, 2: {2}, 3: {1}})
+	if svc.Covers(in(2, 0), 2, 3) {
+		t.Fatal("company 2's administrator may act on an account placed only in company 1")
+	}
+	if !svc.Covers(in(1, 0), admin, 3) {
+		t.Fatal("company 1's administrator covers its own roleless account")
+	}
+	if got, _ := svc.SearchUsers(in(2, 0), "example.com"); len(got) != 2 {
+		t.Fatalf("company 2's member search lists %d users, want the 2 placed there", len(got))
+	}
+	svc.UsePlacements(placements{1: {1, 2}, 2: {2}, 3: {1, 2}})
+	if svc.Covers(in(2, 0), 2, 3) {
+		t.Fatal("an account placed in two companies is covered only with rights in both")
+	}
+}
+
+func TestTheFounderOfACompanyBecomesItsAdministrator(t *testing.T) {
+	svc, _ := setupWithAdmin(t)
+	if err := svc.AppointFounder(context.Background(), 7, 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AppointFounder(context.Background(), 7, 3); err != nil {
+		t.Fatalf("repeated: %v", err)
+	}
+	if !svc.Can(in(7, 0), 3, "users.manage") || svc.Can(in(1, 0), 3, "users.manage") || svc.Can(in(8, 0), 3, "users.manage") {
+		t.Fatal("the founder is Administrator of their company — and only there")
+	}
+}
+
+func TestARoleElsewhereNeverHandsAnAccountToThatCompany(t *testing.T) {
+	svc, repo := setupWithAdmin(t)                       // admin: Administrator of company 1
+	_ = repo.AddMember(context.Background(), 2, 0, 1, 2) // Ana: Administrator of company 2 only
+	viewer, _ := svc.CreateRole(context.Background(), admin, application.RoleInput{Name: "Pembaca", Permissions: []string{"users.read"}})
+	_ = repo.AddMember(context.Background(), 2, 0, viewer.ID, 3) // Budi: a role in company 2 …
+	svc = fresh(repo)
+	svc.UsePlacements(placements{1: {1}, 2: {2}, 3: {1, 2}}) // … and works in both companies
+	if svc.Covers(in(2, 0), 2, 3) {
+		t.Fatal("a role in company 2 handed company 2 an account that also works in company 1")
+	}
+	if !svc.Covers(in(1, 0), admin, 3) {
+		t.Fatal("the home company's Administrator covers anyone")
+	}
+}
+
+func TestACompanysFounderStaysWithinTheHomeAdministratorsReach(t *testing.T) {
+	svc, repo := setupWithAdmin(t)
+	if err := svc.AppointFounder(context.Background(), 7, 2); err != nil { // Ana created company 7
+		t.Fatal(err)
+	}
+	svc = fresh(repo)
+	svc.UsePlacements(placements{2: {1, 7}})
+	if !svc.Covers(in(1, 0), admin, 2) {
+		t.Fatal("creating a company made its founder untouchable by the home company's Administrator")
+	}
+}
+
+func TestABranchAdministratorReachesAccountsThatLiveInTheBranch(t *testing.T) {
+	svc, repo := setupWithAdmin(t)
+	_ = repo.AddMember(context.Background(), 1, 5, 1, 2) // Ana: Administrator of branch 5
+	svc = fresh(repo)
+	svc.UsePlacements(placementsAt{3: {{CompanyID: 1, BranchID: 5}}, 4: {{CompanyID: 1}}})
+	if !svc.Covers(in(1, 5), 2, 3) {
+		t.Fatal("a branch administrator covers someone who works only in that branch")
+	}
+	if svc.Covers(in(1, 5), 2, 4) {
+		t.Fatal("a branch administrator covers someone working across the company")
+	}
+}
+
+// placementsAt is a fake organization module with branches: user → workplaces.
+type placementsAt map[int64][]ports.Workplace
+
+func (p placementsAt) PlacesOf(_ context.Context, user int64) ([]ports.Workplace, error) {
+	return p[user], nil
+}
+
+func (p placementsAt) PlacedUserIDs(context.Context, int64) ([]int64, error) { return nil, nil }

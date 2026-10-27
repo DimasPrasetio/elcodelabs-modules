@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"__GO_MODULE__/internal/kernel"
 	"__GO_MODULE__/internal/modules/users/application"
 	"__GO_MODULE__/internal/modules/users/domain"
+	"__GO_MODULE__/internal/modules/users/ports"
 	"__GO_MODULE__/internal/shared/apperror"
 	"__GO_MODULE__/internal/shared/pagination"
 )
@@ -33,6 +36,24 @@ func (m *memRepo) List(_ context.Context, _ string, _ pagination.Params) ([]doma
 		out = append(out, u)
 	}
 	return out, int64(len(out)), nil
+}
+
+func (m *memRepo) ListIn(_ context.Context, ids []int64, _ string, _ pagination.Params) ([]domain.User, int64, error) {
+	var out []domain.User
+	for _, id := range ids {
+		if u, ok := m.users[id]; ok {
+			out = append(out, u)
+		}
+	}
+	return out, int64(len(out)), nil
+}
+
+func (m *memRepo) IDs(context.Context) ([]int64, error) {
+	var out []int64
+	for id := range m.users {
+		out = append(out, id)
+	}
+	return out, nil
 }
 
 func (m *memRepo) CountAll(context.Context) (int64, error) { return int64(len(m.users)), nil }
@@ -111,6 +132,9 @@ type guard map[int64]bool
 
 func (g guard) Covers(_ context.Context, target int64) bool { return !g[target] }
 
+// Can: users.manage everywhere except in companies listed as -<id>.
+func (g guard) Can(ctx context.Context, _ string) bool { return !g[-kernel.ScopeFrom(ctx).CompanyID] }
+
 // audit keeps what was recorded.
 type audit struct{ got []kernel.AuditEntry }
 
@@ -135,7 +159,7 @@ func newAudited(repo application.Repository, protected ...int64) (*application.S
 		g[id] = true
 	}
 	a := &audit{}
-	return application.NewService(repo, plainHasher{}, g, a), a
+	return application.NewService(repo, kernel.NewTxSlot(nil, slog.New(slog.NewTextHandler(io.Discard, nil))), plainHasher{}, g, a), a
 }
 
 func boolPtr(b bool) *bool { return &b }
@@ -308,5 +332,83 @@ func TestChangesAreAudited(t *testing.T) {
 		if strings.Contains(fmt.Sprint(e.Data), "new-secret-1") {
 			t.Fatal("a password reached the audit trail")
 		}
+	}
+}
+
+// placements is a fake organization module: user → companies they are placed in.
+type placements map[int64][]int64
+
+func (p placements) PlacedUserIDs(_ context.Context, company int64) ([]int64, error) {
+	var out []int64
+	for u, cs := range p {
+		for _, c := range cs {
+			if c == company {
+				out = append(out, u)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (p placements) IsPlaced(_ context.Context, user, company int64) (bool, error) {
+	for _, c := range p[user] {
+		if c == company {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (p placements) PlacesOf(_ context.Context, user int64) ([]ports.Workplace, error) {
+	var out []ports.Workplace
+	for _, c := range p[user] {
+		out = append(out, ports.Workplace{CompanyID: c})
+	}
+	return out, nil
+}
+
+func (p placements) PlaceNew(ctx context.Context, user int64) error {
+	p[user] = append(p[user], kernel.ScopeFrom(ctx).CompanyID)
+	return nil
+}
+
+func in(company int64) context.Context {
+	return kernel.WithScope(context.Background(), kernel.Scope{CompanyID: company})
+}
+
+func TestWithPlacementsTheUsersPagesShowOneCompany(t *testing.T) {
+	repo := newMemRepo()
+	svc := newService(repo)
+	a, _ := svc.Create(in(1), application.CreateInput{Name: "Ana", Email: "ana@a.test", Password: "password-1", IsActive: true})
+	b, _ := svc.Create(in(2), application.CreateInput{Name: "Budi", Email: "budi@b.test", Password: "password-1", IsActive: true})
+	p := placements{a.ID: {1}, b.ID: {2}}
+	svc.UsePlacements(p)
+	c, err := svc.Create(in(2), application.CreateInput{Name: "Citra", Email: "citra@b.test", Password: "password-1", IsActive: true})
+	if err != nil || len(p[c.ID]) != 1 || p[c.ID][0] != 2 {
+		t.Fatalf("a new user is placed where they were created: %v %v", p[c.ID], err)
+	}
+	list, total, _ := svc.ListHere(in(2), "", pagination.Params{Page: 1, Limit: 20})
+	if total != 2 || len(list) != 2 {
+		t.Fatalf("company 2 lists %d users, want Budi and Citra", total)
+	}
+	if _, err := svc.GetHere(in(2), a.ID); status(t, err) != http.StatusNotFound {
+		t.Fatalf("company 1's user seen from company 2: %v", err)
+	}
+	if _, err := svc.Update(in(2), b.ID, a.ID, application.UpdateInput{Name: "X", Email: "ana@a.test"}); status(t, err) != http.StatusNotFound {
+		t.Fatalf("company 1's user changed from company 2: %v", err)
+	}
+	if all, _, _ := svc.List(in(2), "", pagination.Params{Page: 1, Limit: 20}); len(all) != 3 {
+		t.Fatalf("the contract's list is everyone: %d", len(all))
+	}
+}
+
+func TestAnAccountWorkingInTwoCompaniesNeedsAManagerInBoth(t *testing.T) {
+	repo := newMemRepo()
+	svc := newService(repo, -1) // the actor manages users in company 2, not in company 1
+	a, _ := svc.Create(in(1), application.CreateInput{Name: "Ana", Email: "ana@a.test", Password: "password-1", IsActive: true})
+	b, _ := svc.Create(in(2), application.CreateInput{Name: "Budi", Email: "budi@b.test", Password: "password-1", IsActive: true})
+	svc.UsePlacements(placements{a.ID: {1, 2}, b.ID: {2}})
+	if _, err := svc.Update(in(2), b.ID, a.ID, application.UpdateInput{Name: "Ana", Email: "mine@b.test", Password: "taken-over-1"}); status(t, err) != http.StatusForbidden {
+		t.Fatalf("company 2 changed an account that also works in company 1: %v", err)
 	}
 }

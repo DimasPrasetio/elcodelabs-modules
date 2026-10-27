@@ -1,9 +1,9 @@
 {
   "id": "settings",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "kind": "fullstack",
   "title": "Settings",
-  "summary": "Settings per company: the company profile (name, legal name, address, NPWP, phone, email, time zone, logo) other modules use on documents (SettingsClient), and a settings page other modules add sections to (slot settings:sections). Scoped: each company keeps its own. Every change audited.",
+  "summary": "Settings per company: the company profile (name, legal name, address, NPWP, phone, email, logo) other modules use on documents (SettingsClient), and a settings page other modules add sections to (slot settings:sections). Scoped: each company keeps its own. Every change audited.",
   "when_to_use": [
     "The app prints or sends documents with the company's details, or needs one place for app-wide settings."
   ],

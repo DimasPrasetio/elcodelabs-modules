@@ -47,12 +47,15 @@ type loginRequest struct {
 type Handler struct {
 	svc          *application.Service
 	secureCookie bool
+	// signedIn is the kernel's d.Auth.Require: this module's session check, then the request's
+	// scope — so someone allowed nowhere (no company, no branch) is refused here too.
+	signedIn func(http.Handler) http.Handler
 }
 
 // NewHandler returns the handler. secureCookie marks the cookie HTTPS-only — true in
 // production, where nginx terminates TLS.
-func NewHandler(svc *application.Service, secureCookie bool) *Handler {
-	return &Handler{svc: svc, secureCookie: secureCookie}
+func NewHandler(svc *application.Service, secureCookie bool, signedIn func(http.Handler) http.Handler) *Handler {
+	return &Handler{svc: svc, secureCookie: secureCookie, signedIn: signedIn}
 }
 
 func (h *Handler) cookieName() string {
@@ -76,9 +79,9 @@ func (h *Handler) setCookie(w http.ResponseWriter, value string, expires time.Ti
 func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
 	mux.HandleFunc("POST /api/v1/auth/logout", h.logout)
-	mux.Handle("GET /api/v1/auth/me", h.Require(http.HandlerFunc(h.me)))
+	mux.Handle("GET /api/v1/auth/me", h.signedIn(http.HandlerFunc(h.me)))
 	mux.HandleFunc("GET /api/v1/auth/options", h.options)
-	mux.Handle("POST /api/v1/auth/password", h.Require(http.HandlerFunc(h.changePassword)))
+	mux.Handle("POST /api/v1/auth/password", h.signedIn(http.HandlerFunc(h.changePassword)))
 	mux.HandleFunc("POST /api/v1/auth/forgot", h.forgot)
 	mux.HandleFunc("POST /api/v1/auth/reset", h.reset)
 }

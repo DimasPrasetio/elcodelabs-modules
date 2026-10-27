@@ -65,6 +65,10 @@ and `UserMenu` in the `"sidebar-footer"` slot. Replaces the scaffold's starter `
 
 ## Changes
 
+- **0.7.0** — `GET /auth/me` and `POST /auth/password` go through the kernel's `d.Auth.Require`,
+  so they carry the request's scope like every other guarded route; a signed-in user the API
+  refuses everywhere (403 — e.g. placed in no company or branch by an `organization` module)
+  sees why, with "Keluar" to sign out, instead of a retry loop.
 - **0.6.0** — needs kernel 6. Sessions and reset tokens stored inside `d.Tx`; sign-ins, failed
   sign-ins, sign-outs, and password changes recorded as `security` audit (UU PDP: who got in,
   and who tried). Every guarded request now carries its company/branch scope (resolved by the

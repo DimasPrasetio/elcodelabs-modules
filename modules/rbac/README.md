@@ -29,13 +29,19 @@ Permissions come from code; roles and who holds them are data admins edit.
   permissions in that branch, and the user placed there (`d.Scope`; without an organization
   module only company 1 exists, with no branches); defining, changing, or deleting a role —
   defined once for the app — needs them company-wide in every company where the role has
-  members, under a lock on the role, so nobody gives it elsewhere in between. An account is one
-  across companies and branches, so acting on it (`Covers`: reset a password, deactivate) is a
-  company-wide act: it needs, company-wide, everything its owner holds, in every company — and
-  for an account holding nothing, some company-wide permission in the active company. Each company
+  members, under a lock on the role, so nobody gives it elsewhere in between. An account belongs
+  wherever it holds a role and — with the `Placements` port — wherever it works; with neither,
+  to company 1 as a whole. Acting on it (`Covers`: reset a password, deactivate) needs, in every
+  one of those places, a standing of one's own and everything the account holds there — across
+  a company, company-wide; in a branch, in that branch. One company never reaches an account
+  another company shares; a branch administrator reaches only accounts that live in their
+  branch. An Administrator across company 1 — the home company, where an `organization` module
+  manages companies — administers the whole installation: they hold every permission in every
+  company (still entering only where they are placed), so no company, not even one a colleague
+  created, is beyond them. Each company
   keeps at least one active company-wide Administrator (checked under a lock, so two removals at
   once cannot both pass); the first one is bootstrapped in company 1 — another company's first
-  is the organization module's to appoint when it creates the company.
+  is its creator, appointed when the `organization` module announces it.
 
 **API:** `GET /api/v1/rbac/me` (the signed-in user's permissions — session only) and, behind
 `rbac.manage`: permission catalog, roles CRUD, role members (list/add/remove), user search.
@@ -52,6 +58,13 @@ in one branch is the API's `branch_id` (an organization module brings the branch
 
 ## Changes
 
+- **0.6.0** — With an `organization` module: the creator of a new company becomes its
+  Administrator (listens to `organization.company.created`) — how a second company gets its
+  first one; optional late port `Placements` — `Covers` counts where an account works as well as
+  where it holds roles (branch-aware: a branch administrator reaches accounts that live in
+  the branch), and the
+  member search lists the active company's people. Wire it with
+  `module.mjs upgrade rbac --port Placements=organization`.
 - **0.5.0** — needs kernel 6. Roles held per company and branch (migration 003: `company_id`,
   `branch_id` on `user_roles`; existing members stay company-wide in company 1), `Units` for
   `d.Authz.Units`, membership changes recorded as `security` audit, repositories inside `d.Tx`.

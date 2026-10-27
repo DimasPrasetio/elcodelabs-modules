@@ -2,9 +2,11 @@
 package presentation
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 
 	"__GO_MODULE__/internal/kernel"
 	"__GO_MODULE__/internal/modules/settings/application"
@@ -19,13 +21,16 @@ import (
 const PermManage = "settings.manage"
 
 type companyDTO struct {
+	// CompanyID is the company the profile belongs to — the request's scope — so the page can
+	// show that company's logo (GET …/logo?company=<id>).
+	CompanyID int64  `json:"company_id"`
 	Name      string `json:"name"`
 	LegalName string `json:"legal_name"`
 	Address   string `json:"address"`
 	Phone     string `json:"phone"`
 	Email     string `json:"email"`
 	TaxID     string `json:"tax_id"`
-	Timezone  string `json:"timezone"`
+	Timezone  string `json:"timezone"` // deprecated (see contracts.Company)
 	HasLogo   bool   `json:"has_logo"`
 	// LogoUpload says whether this install can store a logo (a file store is wired).
 	LogoUpload bool `json:"logo_upload"`
@@ -53,7 +58,8 @@ func NewHandler(svc *application.Service, auth kernel.Authenticator, authz *kern
 }
 
 // Routes mounts the handlers. Reading the profile needs a session; changing it settings.manage;
-// the logo itself is public — the sign-in page and emails show it.
+// the logo itself is public — the sign-in page and emails show it — and names its company
+// (?company=<id>, default 1), since a public request has no scope.
 func (h *Handler) Routes(mux *http.ServeMux) {
 	manage := func(f http.HandlerFunc) http.Handler { return h.authz.Require(PermManage, f) }
 	mux.Handle("GET /api/v1/settings/company", h.auth.Require(http.HandlerFunc(h.company)))
@@ -63,8 +69,8 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/settings/company/logo", h.logo)
 }
 
-func (h *Handler) dto(c domain.Company) companyDTO {
-	return companyDTO{Name: c.Name, LegalName: c.LegalName, Address: c.Address, Phone: c.Phone, Email: c.Email, TaxID: c.TaxID,
+func (h *Handler) dto(ctx context.Context, c domain.Company) companyDTO {
+	return companyDTO{CompanyID: kernel.ScopeFrom(ctx).CompanyID, Name: c.Name, LegalName: c.LegalName, Address: c.Address, Phone: c.Phone, Email: c.Email, TaxID: c.TaxID,
 		Timezone: c.Timezone, HasLogo: c.LogoFileID != 0, LogoUpload: h.svc.Options().LogoUpload}
 }
 
@@ -74,7 +80,7 @@ func (h *Handler) company(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	response.OK(w, "Profil perusahaan", h.dto(c))
+	response.OK(w, "Profil perusahaan", h.dto(r.Context(), c))
 }
 
 func (h *Handler) updateCompany(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +96,7 @@ func (h *Handler) updateCompany(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	response.OK(w, "Profil perusahaan disimpan", h.dto(c))
+	response.OK(w, "Profil perusahaan disimpan", h.dto(r.Context(), c))
 }
 
 // uploadLogo streams the "file" part of a multipart form to the file store — never into memory
@@ -121,7 +127,7 @@ func (h *Handler) uploadLogo(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, r, err)
 			return
 		}
-		response.OK(w, "Logo disimpan", h.dto(c))
+		response.OK(w, "Logo disimpan", h.dto(r.Context(), c))
 		return
 	}
 	response.Error(w, r, apperror.BadRequest("Kolom file tidak ada"))
@@ -134,11 +140,22 @@ func (h *Handler) removeLogo(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	response.OK(w, "Logo dihapus", h.dto(c))
+	response.OK(w, "Logo dihapus", h.dto(r.Context(), c))
 }
 
 func (h *Handler) logo(w http.ResponseWriter, r *http.Request) {
-	rc, kind, err := h.svc.Logo(r.Context())
+	company := kernel.DefaultCompany
+	if c := r.URL.Query().Get("company"); c != "" {
+		id, err := strconv.ParseInt(c, 10, 64)
+		if err != nil || id < 1 {
+			response.Error(w, r, apperror.NotFound("Logo belum diatur"))
+			return
+		}
+		company = id
+	}
+	// No session, so no scope: the company is the one asked for. With an organization module
+	// (several companies) there is no default to fall back on.
+	rc, kind, err := h.svc.Logo(kernel.WithScope(r.Context(), kernel.Scope{CompanyID: company}))
 	if errors.Is(err, contracts.ErrNoLogo) {
 		response.Error(w, r, apperror.NotFound("Logo belum diatur"))
 		return

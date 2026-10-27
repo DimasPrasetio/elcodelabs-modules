@@ -1,9 +1,9 @@
 {
   "id": "users",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "kind": "fullstack",
   "title": "Users",
-  "summary": "The people who can sign in: list, search, add, edit, deactivate; each person's own profile page; first-user bootstrap from env. Offers UserClient (incl. SetPassword for an auth provider); every change audited; guarded by users.read / users.manage.",
+  "summary": "The people who can sign in: list, search, add, edit, deactivate; each person's own profile page; first-user bootstrap from env. Offers UserClient (incl. SetPassword for an auth provider, IDs); every change audited; guarded by users.read / users.manage. With an organization module, its pages show the active company's people.",
   "when_to_use": [
     "Any app where people sign in with an account the app itself stores."
   ],
@@ -20,7 +20,19 @@
     ],
     "kernel": []
   },
-  "ports": [],
+  "ports": [
+    {
+      "name": "Placements",
+      "required": false,
+      "description": "Who is placed in which company (an organization module). With it the users pages show only the people placed in the active company, and a new user is placed where they were created. Wired once every module is built (late).",
+      "adapters": {
+        "organization": {
+          "file": "adapters/placements_organization.go",
+          "expr": "usersPlacements{organization: organizationModule.Client()}"
+        }
+      }
+    }
+  ],
   "ui": [
     "ui-core",
     "ui-data",
@@ -91,7 +103,10 @@
       "routes": [
         "usersModule.Routes(mux)"
       ],
-      "after": []
+      "after": [],
+      "late": [
+        "usersModule.UsePlacements({{port:Placements}})"
+      ]
     },
     "web": {
       "import": "@/modules/users/module",

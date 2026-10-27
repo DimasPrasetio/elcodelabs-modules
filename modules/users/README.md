@@ -29,8 +29,18 @@ creates that user at startup when the table is empty. Remove both after the firs
 
 **Offers** `contracts.UserClient` — `GetByID` (with `PasswordChangedAt`), `SetPassword` (for an
 auth provider; validates 8–72 bytes, records the change), `GetByEmail`, `Search` (e.g. for assigning
-roles), `GetCredentialsByEmail` (for an auth provider).
+roles — every user, whatever company the request works in), `SearchAmong` (the same among
+given IDs, e.g. one company's people), `IDs` (every user's ID),
+`GetCredentialsByEmail` (for an auth provider).
 It imports no other module.
+
+**Several companies** — optional port `Placements` (ready-made adapter: `organization`), wired
+once every module is built (`register.go.late`: the organization module itself needs users).
+With it, the users pages list, open, and change only the people placed in the company the
+request works in, and a user created there is placed there — in the same transaction as the
+account; changing an account that also works elsewhere (another company, another branch) needs
+`users.manage` there too. Without it, everyone is listed, as before. Wire it with
+`module.mjs upgrade users --port Placements=organization`.
 
 **Web:** `/users` — the Bingkai Navy list template: toolbar search with a filter chip, data
 table (status pill, ⋯ row menu), pagination with rows per page; add/edit in a side sheet,
@@ -44,6 +54,8 @@ provider), changing one's own email.
 
 ## Changes
 
+- **0.7.0** — `UserClient.IDs` and `SearchAmong`; optional late port `Placements` (per-company users pages, new
+  users placed where they were created); creating a user runs inside `d.Tx`.
 - **0.6.0** — needs kernel 6. Repositories run inside `d.Tx` (a caller's transaction is joined —
   an HR module can create an employee and their account in one commit); deactivation,
   activation, and a new password or email are recorded as `security` audit.

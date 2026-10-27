@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Testbed — proves the library's modules install into a fresh project and work.
 //
-// Six scenarios, each in its own fresh project: a copy of the pinned kernel host (kernel/host,
+// Seven scenarios, each in its own fresh project: a copy of the pinned kernel host (kernel/host,
 // scaffolded by a released monorepo-elcodelabs — see kernel/README.md), so nothing outside this
 // repository is needed:
 //   full        preset bingkai-navy + ui-core + app-shell + users + auth + rbac (ports ← users)
@@ -10,6 +10,8 @@
 //   users-alone ui-core + users, no auth provider (guarded routes must refuse)
 //   lifecycle   the module.mjs CLI: add, status, upgrade (clean merge + conflict), detach, promote
 //   kernel6     fixture modules: one d.Tx across modules, durable events, scope, a Go kit, schedules
+//   organization every module + organization added later, its late ports wired with module.mjs:
+//               several companies and branches against MySQL
 // Each: install → npm install → go mod tidy → sqlc generate → gofmt → go vet → go test →
 // build:web → build:api → run the binary and call the API.
 //
@@ -202,7 +204,7 @@ const qpDecode = (s) => s.replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/g, (_, 
 async function waitFor(fn, ms = 30000) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
-    const v = fn();
+    const v = await fn(); // fn may be async
     if (v) return v;
     await new Promise((r) => setTimeout(r, 500));
   }
@@ -1004,7 +1006,230 @@ for (const tool of ["go", "sqlc", "gofmt"]) {
   }
 }
 
-const scenarios = { full, "no-rbac": noRbac, "auth-alone": authAlone, "users-alone": usersAlone, lifecycle, kernel6 };
+// organization: a running app with every module gains several companies — organization added
+// after the others, the late ports of users and rbac wired with module.mjs — and then works per
+// company and branch against MySQL, with no route or job left reading a scope it has not got.
+async function organization() {
+  log("\n=== organization: several companies and branches, added to a running app ===");
+  const lib = mkdtempSync(join(LIB, ".testbed", "liborg-"));
+  const dir = scaffold("organization");
+  const g = (...a) => spawnSync("git", ["-C", lib, ...a], { encoding: "utf8" });
+  const cli = (...a) => spawnSync(process.execPath, [join(lib, "scripts/module.mjs"), ...a, "--project", dir], { encoding: "utf8" });
+  let api;
+  try {
+    for (const p of ["modules", "themes", "scripts", "docs", "kernel"]) cpSync(join(LIB, p), join(lib, p), { recursive: true });
+    for (const f of [".gitignore", ".gitattributes"]) cpSync(join(LIB, f), join(lib, f));
+    g("init", "-q", "-b", "main");
+    g("add", "-A");
+    g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "library");
+    applyPreset(lib, dir, "bingkai-navy");
+    let installed;
+    for (const [id, opts] of [
+      ["app-shell"], ["files"], ["mailer"], ["users"],
+      ["auth", { ports: { UserStore: "users", PasswordWriter: "users", Mailer: "mailer" } }],
+      ["rbac", { ports: { UserDirectory: "users" } }],
+      ["settings", { ports: { FileStore: "files" } }],
+      ["organization", { ports: { UserDirectory: "users" } }],
+    ]) {
+      installed = installModule(lib, dir, id, opts);
+    }
+    expect("installing organization names the optional ports waiting for it",
+      ["users's optional port Placements", "rbac's optional port Placements"].every((n) => installed.notes.some((x) => x.includes(n))), installed.notes);
+    const registry = join(dir, "apps/api/internal/modules/registry.go");
+    const before = readFileSync(registry, "utf8");
+    let r = cli("upgrade", "users", "--port", "Placements=organization");
+    expect("module.mjs wires users' late Placements port to organization (installed after it)", r.status === 0, r.stdout + r.stderr);
+    r = cli("upgrade", "rbac", "--port", "Placements=organization");
+    expect("…and rbac's", r.status === 0, r.stdout + r.stderr);
+    const reg = readFileSync(registry, "utf8");
+    const end = reg.indexOf("// elco:modules:end");
+    expect("the late lines follow every module's block — users' own block stays where it was",
+      reg.indexOf("usersModule.UsePlacements(usersPlacements{organization: organizationModule.Client()})") > reg.indexOf("organization.New(")
+      && reg.indexOf("rbacModule.UsePlacements(rbacPlacements{organization: organizationModule.Client()})") > reg.indexOf("organization.New(")
+      && reg.indexOf("rbacModule.UsePlacements(rbacPlacements{organization: organizationModule.Client()})") < end
+      && reg.indexOf("usersModule, err := users.New(d)") === before.indexOf("usersModule, err := users.New(d)"), reg);
+    expect("rbac hears organization.company.created through the composition root",
+      reg.includes('d.Events.On("organization.company.created", "rbac.appoint-founder", rbacModule.OnCompanyCreated)'));
+    r = cli("remove", "organization");
+    expect("removing organization is refused while users and rbac are wired to it", r.status === 1 && r.stderr.includes("users"), r.stderr);
+    // A module installed after the late lines: they move back after its block.
+    installModule(lib, dir, "audit-log", { ports: { UserDirectory: "users" } });
+    // A release whose build line changes, upgraded while rewiring (its block moves to the end):
+    // its own late line must follow it again.
+    const rbacManifest = join(lib, "modules/rbac/module.json");
+    const rm = JSON.parse(readFileSync(rbacManifest, "utf8"));
+    rm.version = "0.6.1";
+    rm.ports.push({ name: "Extra", required: false, description: "testbed: a port a later release adds", adapters: {} });
+    rm.register.go.build[0] = "rbacModule, err := rbac.New(d, {{port:UserDirectory}}, {{port:Extra}})";
+    writeFileSync(rbacManifest, JSON.stringify(rm, null, 2) + "\n");
+    const rbacGo = join(lib, "modules/rbac/api/rbac.module.go");
+    writeFileSync(rbacGo, readFileSync(rbacGo, "utf8").replace("func New(d *kernel.Deps, users ports.UserDirectory) (*Module, error) {", "func New(d *kernel.Deps, users ports.UserDirectory, _ ...any) (*Module, error) {"));
+    g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "rbac 0.6.1");
+    r = cli("upgrade", "rbac", "--port", "Extra=expr:struct{}{}");
+    const moved = readFileSync(registry, "utf8");
+    expect("an upgrade moving a block to the end keeps every late line after every block",
+      r.status === 0 && moved.indexOf("rbac.New(d,") > moved.indexOf("auditlog.New(")
+      && moved.indexOf("rbacModule.UsePlacements(") > moved.indexOf("rbac.New(d,") && moved.indexOf("usersModule.UsePlacements(") > moved.indexOf("rbac.New(d,"),
+      r.stdout + r.stderr + moved.slice(moved.indexOf("elco:modules:begin")));
+    if (!build(dir)) return;
+    if (!DB_DSN) {
+      skip("organization: API checks against MySQL — set TESTBED_DB_DSN");
+      return;
+    }
+    const db = parseDsn(DB_DSN);
+    const name = `elco_testbed_org_${Date.now()}`;
+    try {
+      const dsn = freshDatabase(dir, db, name);
+      const port = 18099;
+      api = await startApi(dir, port, { DB_DSN: dsn, USERS_BOOTSTRAP_EMAIL: "admin@example.com", USERS_BOOTSTRAP_PASSWORD: "admin-pass-123", APP_TIMEZONE: "Asia/Jakarta" });
+      const q = (sql) => mysqlQuery(db, sql, name);
+      const signIn = async (email, password) => {
+        const c = client(port);
+        const res = await c.call("POST", "/api/v1/auth/login", { email, password });
+        expect(`${email} signs in`, res.status === 200, res.body);
+        return c;
+      };
+      const admin = await signIn("admin@example.com", "admin-pass-123");
+      const at = (scope) => (scope ? { "X-Scope": scope } : {});
+
+      let me = await admin.call("GET", "/api/v1/organization/me");
+      expect("installing organization changes nothing: the admin works in company 1, named after the app",
+        me.status === 200 && me.body.data.current.company_id === 1 && me.body.data.units[0]?.company_name === "Testbed App", me.body);
+      expect("every existing user was placed across company 1", q("SELECT COUNT(*) FROM org_placements WHERE company_id = 1 AND branch_id = 0") === "1");
+      const logo = await admin.call("GET", "/api/v1/settings/company/logo");
+      expect("the public logo route chooses its company (no scope to read) → 404, not 500", logo.status === 404, logo.body);
+
+      // A second company: its creator is placed there and becomes its Administrator.
+      let res = await admin.call("POST", "/api/v1/organization/companies", { code: "pt-b", name: "PT B", timezone: "Asia/Makassar" });
+      expect("company B created", res.status === 201 && res.body.data.code === "PT-B", res.body);
+      const b = res.body.data.id;
+      const founder = await waitFor(async () => {
+        const p = await admin.call("GET", "/api/v1/rbac/me", undefined, at(String(b)));
+        return p.status === 200 && p.body.data.permissions.includes("users.manage") ? "ok" : undefined;
+      }, 15000);
+      expect("its creator becomes its Administrator (organization.company.created → rbac)", founder === "ok",
+        founder === "ok" ? undefined : mysqlQuery(db, "SELECT CONCAT_WS(' | ', kind, status, attempts, last_error) FROM kernel_tasks ORDER BY id DESC LIMIT 1", name));
+      res = await admin.call("POST", "/api/v1/organization/companies", { code: "PT-C", name: "PT C", timezone: "Asia/Jakarta" }, at(String(b)));
+      expect("companies are managed only from the home company → 403 from inside B", res.status === 403, res.body);
+
+      // Isolation: settings and users per company.
+      await admin.call("PUT", "/api/v1/settings/company", { name: "PT B Legal", legal_name: "", address: "", phone: "", email: "", tax_id: "", timezone: "Asia/Makassar" }, at(String(b)));
+      const s1 = await admin.call("GET", "/api/v1/settings/company");
+      const sB = await admin.call("GET", "/api/v1/settings/company", undefined, at(String(b)));
+      expect("each company keeps its own profile", s1.body.data?.name !== "PT B Legal" && sB.body.data?.name === "PT B Legal" && sB.body.data?.company_id === b, [s1.body, sB.body]);
+      res = await admin.call("POST", "/api/v1/users", { name: "Budi B", email: "budi@b.test", password: "budi-pass-123" }, at(String(b)));
+      expect("a user created in company B", res.status === 201, res.body);
+      const budi = res.body.data.id;
+      expect("…is placed in B in the same transaction", q(`SELECT COUNT(*) FROM org_placements WHERE user_id = ${budi} AND company_id = ${b} AND branch_id = 0 AND is_default = TRUE`) === "1");
+      const list1 = await admin.call("GET", "/api/v1/users");
+      const listB = await admin.call("GET", "/api/v1/users", undefined, at(String(b)));
+      expect("company 1's users page does not list B's people; B's lists them",
+        !list1.body.data.some((u) => u.id === budi) && listB.body.data.some((u) => u.id === budi), [list1.body.meta, listB.body.meta]);
+      expect("B's user is not found from company 1", (await admin.call("GET", `/api/v1/users/${budi}`)).status === 404);
+
+      // Denials, and the user's own default.
+      const bc = await signIn("budi@b.test", "budi-pass-123");
+      me = await bc.call("GET", "/api/v1/organization/me");
+      expect("a user works where they are placed: B, in its time zone", me.status === 200 && me.body.data.current.company_id === b && me.body.data.current.timezone === "Asia/Makassar", me.body);
+      expect("…and is refused company 1 (403)", (await bc.call("GET", "/api/v1/organization/me", undefined, at("1"))).status === 403);
+      expect("…and a malformed scope (403)", (await bc.call("GET", "/api/v1/organization/me", undefined, at("1;DROP"))).status === 403);
+
+      // Company B's own Administrator cannot claim company 1's accounts.
+      res = await admin.call("POST", "/api/v1/users", { name: "Citra A", email: "citra@a.test", password: "citra-pass-123" });
+      const citra = res.body.data?.id;
+      const adminRole = (await admin.call("GET", "/api/v1/rbac/roles", undefined, at(String(b)))).body.data.find((r) => r.is_system).id;
+      res = await admin.call("POST", `/api/v1/rbac/roles/${adminRole}/members`, { user_id: budi }, at(String(b)));
+      expect("Budi made Administrator of B only", res.status === 201, res.body);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      res = await bc.call("POST", "/api/v1/organization/placements", { user_id: citra, branch_id: 0 });
+      expect("B's Administrator cannot place company 1's account in B (to take it over) → 403", res.status === 403, res.body);
+      res = await bc.call("POST", "/api/v1/organization/placements", { user_id: 999999, branch_id: 0 });
+      expect("…nor learn whether an account exists: an unknown one answers the same 403", res.status === 403, res.body);
+      res = await bc.call("PUT", `/api/v1/users/${citra}`, { name: "Citra A", email: "mine@b.test", password: "taken-over-123" });
+      expect("…nor change it", res.status === 404, res.body);
+
+      // A branch in another zone: its business date follows it.
+      res = await admin.call("POST", "/api/v1/organization/branches", { code: "jyp", name: "Jayapura", timezone: "Asia/Jayapura", nitku: "0123456789012345000001" });
+      expect("a branch with its own zone and NITKU", res.status === 201 && res.body.data.code === "JYP", res.body);
+      const jyp = res.body.data.id;
+      me = await admin.call("GET", "/api/v1/organization/me", undefined, at(`1:${jyp}`));
+      expect("someone placed across company 1 enters its branch, in the branch's zone", me.status === 200 && me.body.data.current.branch_id === jyp && me.body.data.current.timezone === "Asia/Jayapura", me.body);
+      expect("a branch of company 1 asked under company B → 403", (await admin.call("GET", "/api/v1/organization/me", undefined, at(`${b}:${jyp}`))).status === 403);
+      res = await admin.call("POST", "/api/v1/organization/placements", { user_id: budi, branch_id: jyp });
+      expect("B's user placed in company 1's Jayapura branch too", res.status === 201, res.body);
+      expect("…enters that branch", (await bc.call("GET", "/api/v1/organization/me", undefined, at(`1:${jyp}`))).status === 200);
+      expect("…but not company 1 as a whole", (await bc.call("GET", "/api/v1/organization/me", undefined, at("1"))).status === 403);
+      res = await admin.call("PUT", "/api/v1/organization/me/default", { company_id: 1, branch_id: jyp });
+      expect("a default must be one of the user's own placements → 404", res.status === 404, res.body);
+
+      // A branch head manages the people who work in their branch — and no one else.
+      res = await admin.call("POST", "/api/v1/organization/branches", { code: "BDG", name: "Bandung", timezone: "", nitku: "", address: "" });
+      const bdg = res.body.data.id;
+      res = await admin.call("POST", "/api/v1/rbac/roles", { name: "Kepala cabang", description: "", permissions: ["organization.read", "organization.manage", "users.read", "users.manage"] });
+      const head = res.body.data.id;
+      const kepala = (await admin.call("POST", "/api/v1/users", { name: "Kepala BDG", email: "kepala@a.test", password: "kepala-pass-123" }, at(`1:${bdg}`))).body.data.id;
+      const staf = (await admin.call("POST", "/api/v1/users", { name: "Staf BDG", email: "staf@a.test", password: "staf-pass-123" }, at(`1:${bdg}`))).body.data.id;
+      res = await admin.call("POST", `/api/v1/rbac/roles/${head}/members`, { user_id: kepala, branch_id: bdg });
+      expect("users created in Bandung work there; one heads it", res.status === 201, res.body);
+      const kc = await signIn("kepala@a.test", "kepala-pass-123");
+      res = await kc.call("PUT", `/api/v1/users/${staf}`, { name: "Staf Bandung", email: "staf@a.test" });
+      expect("the branch head changes the account of someone who works only in the branch", res.status === 200, res.body);
+      res = await kc.call("PUT", `/api/v1/users/${citra}`, { name: "Citra A", email: "mine@a.test" });
+      expect("…not one who works across the company", res.status === 403, res.body);
+      res = await kc.call("POST", "/api/v1/organization/placements", { user_id: citra, branch_id: bdg });
+      expect("…nor place them in the branch", res.status === 403, res.body);
+      res = await kc.call("DELETE", `/api/v1/organization/placements/${staf}?branch=${bdg}`);
+      expect("…but takes the branch's own staff out of it", res.status === 200, res.body);
+
+      // Deactivating B: its people cannot work there; Budi still has Jayapura.
+      res = await admin.call("POST", `/api/v1/organization/companies/${b}/deactivate`);
+      expect("company B deactivated", res.status === 200, res.body);
+      me = await bc.call("GET", "/api/v1/organization/me");
+      expect("a deactivated company is no longer anyone's default — Budi falls back to Jayapura", me.status === 200 && me.body.data.current.branch_id === jyp, me.body);
+      expect("…and B cannot be entered", (await bc.call("GET", "/api/v1/organization/me", undefined, at(String(b)))).status === 403);
+      res = await admin.call("DELETE", `/api/v1/organization/placements/${budi}?branch=${jyp}`);
+      expect("his last placement taken away", res.status === 200, res.body);
+      const nowhere = await bc.call("GET", "/api/v1/auth/me");
+      expect("placed nowhere: every request refused, saying why", nowhere.status === 403 && /belum ditempatkan/.test(nowhere.body.message ?? ""), nowhere.body);
+      const unplaced = await admin.call("GET", "/api/v1/organization/unplaced");
+      expect("…and he is listed for the home company's administrators to place", unplaced.status === 200 && unplaced.body.data.some((u) => u.id === budi), unplaced.body);
+      res = await admin.call("POST", `/api/v1/organization/companies/${b}/placements`, { email: "citra@a.test" });
+      expect("from the home company, someone is placed across another company by exact email (recovery)", res.status === 201, res.body);
+      res = await admin.call("POST", `/api/v1/organization/companies/${b}/placements`, { email: "citra@a.test" }, at(`1:${jyp}`));
+      expect("…only from the home company as a whole", res.status === 403, res.body);
+
+      // Public routes and background work in a several-companies app: nothing reads a scope it
+      // has not got (that would panic).
+      expect("public: a failed sign-in → 401", (await client(port).call("POST", "/api/v1/auth/login", { email: "admin@example.com", password: "wrong-wrong" })).status === 401);
+      const forgot = await client(port).call("POST", "/api/v1/auth/forgot", { email: "admin@example.com" });
+      expect("public: forgot password → not a 5xx", forgot.status < 500, forgot.body);
+      await new Promise((resolve) => setTimeout(resolve, 13000)); // every interval job runs within ~11 s of start
+      expect("no panic in any job, task, or route", !/panic/i.test(api.output()), api.output().split("\n").filter((l) => /panic/i.test(l)).slice(0, 5));
+    } finally {
+      stopApi(api);
+      api = undefined;
+      try { mysql(db, `DROP DATABASE IF EXISTS ${name};`); } catch {}
+    }
+    // Unwired, organization can be removed — and the project still compiles.
+    r = cli("upgrade", "users", "--port", "Placements=none");
+    expect("--port Placements=none unwires users' late port", r.status === 0, r.stdout + r.stderr);
+    r = cli("upgrade", "rbac", "--port", "Placements=none");
+    expect("…and rbac's", r.status === 0, r.stdout + r.stderr);
+    r = cli("remove", "organization");
+    const left = readFileSync(registry, "utf8");
+    expect("then organization can be removed (rbac's listener stays: the event simply never comes)",
+      r.status === 0 && !left.includes("organizationModule") && !left.includes("/internal/modules/organization\""), r.stdout + r.stderr);
+    run("go", ["vet", "./..."], join(dir, "apps/api"), "the project compiles without organization (go vet ./...)");
+  } finally {
+    stopApi(api);
+    if (!KEEP) {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(lib, { recursive: true, force: true });
+    }
+  }
+}
+
+const scenarios = { full, "no-rbac": noRbac, "auth-alone": authAlone, "users-alone": usersAlone, lifecycle, kernel6, organization };
 for (const [name, fn] of Object.entries(scenarios)) {
   if (!ONLY || ONLY === name) await fn();
 }

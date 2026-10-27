@@ -81,7 +81,7 @@
     },
     {
       "id": "auth",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "kind": "fullstack",
       "title": "Authentication",
       "summary": "Email + password sign-in with server-side sessions (sign-out, deactivation, and a password change end them), layered sign-in limits, change your own password, and forgot-password by email; the frontend guard, sign-in and password pages, and the user menu. Fills the kernel's d.Auth.",
@@ -228,8 +228,71 @@
       "listens": []
     },
     {
+      "id": "organization",
+      "version": "0.1.0",
+      "kind": "fullstack",
+      "title": "Organization (companies, branches, placements)",
+      "summary": "Several companies and their branches in one app: who is placed where, a company/branch picker in the header, and the kernel's scope resolver (d.Scope) — every request works in one company and, optionally, one branch, in its time zone. Offers OrganizationClient.",
+      "when_to_use": [
+        "One app serves several companies (legal entities), or one company with branches whose people must work only in their own branch.",
+        "Business dates must follow a branch's time zone (WIB, WITA, WIT)."
+      ],
+      "when_not_to_use": [
+        "One company with no branches — without this module every request already works in company 1.",
+        "Departments, positions, and reporting lines — those belong to an HR module."
+      ],
+      "stacks": [
+        "go"
+      ],
+      "requires_kernel": 6,
+      "provides": {
+        "contracts": [
+          "OrganizationClient"
+        ],
+        "kernel": [
+          "scope"
+        ]
+      },
+      "permissions": [
+        "organization.read",
+        "organization.manage",
+        "organization.companies"
+      ],
+      "ports": [
+        {
+          "name": "UserDirectory",
+          "required": true,
+          "description": "Get users by ID or email, search them, and list every ID — to place people and show who is placed where.",
+          "adapters": [
+            "users"
+          ]
+        }
+      ],
+      "ui": [
+        "ui-core",
+        "ui-data",
+        "ui-forms",
+        "ui-feedback"
+      ],
+      "go_kits": [],
+      "owns_tables": [
+        "org_companies",
+        "org_branches",
+        "org_placements"
+      ],
+      "scoped": false,
+      "emits": [
+        {
+          "name": "organization.company.created",
+          "version": 1,
+          "description": "A company was created: {company_id, code, name, created_by}. Its creator is already placed across it."
+        }
+      ],
+      "listens": []
+    },
+    {
       "id": "rbac",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "kind": "fullstack",
       "title": "Roles and permissions (RBAC)",
       "summary": "Who may do what: roles hold permissions that modules declare, users hold roles per company — across it or in one branch. Fills the kernel's d.Authz (and Units for branches); Roles page with a per-module permission editor and members; Administrator role with every permission.",
@@ -262,6 +325,14 @@
           "adapters": [
             "users"
           ]
+        },
+        {
+          "name": "Placements",
+          "required": false,
+          "description": "Who is placed in which company (an organization module): an account with no role belongs where it is placed (Covers), and the member search lists the active company's people. Wired once every module is built (late).",
+          "adapters": [
+            "organization"
+          ]
         }
       ],
       "ui": [
@@ -278,14 +349,16 @@
       ],
       "scoped": false,
       "emits": [],
-      "listens": []
+      "listens": [
+        "organization.company.created"
+      ]
     },
     {
       "id": "settings",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "kind": "fullstack",
       "title": "Settings",
-      "summary": "Settings per company: the company profile (name, legal name, address, NPWP, phone, email, time zone, logo) other modules use on documents (SettingsClient), and a settings page other modules add sections to (slot settings:sections). Scoped: each company keeps its own. Every change audited.",
+      "summary": "Settings per company: the company profile (name, legal name, address, NPWP, phone, email, logo) other modules use on documents (SettingsClient), and a settings page other modules add sections to (slot settings:sections). Scoped: each company keeps its own. Every change audited.",
       "when_to_use": [
         "The app prints or sends documents with the company's details, or needs one place for app-wide settings."
       ],
@@ -478,10 +551,10 @@
     },
     {
       "id": "users",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "kind": "fullstack",
       "title": "Users",
-      "summary": "The people who can sign in: list, search, add, edit, deactivate; each person's own profile page; first-user bootstrap from env. Offers UserClient (incl. SetPassword for an auth provider); every change audited; guarded by users.read / users.manage.",
+      "summary": "The people who can sign in: list, search, add, edit, deactivate; each person's own profile page; first-user bootstrap from env. Offers UserClient (incl. SetPassword for an auth provider, IDs); every change audited; guarded by users.read / users.manage. With an organization module, its pages show the active company's people.",
       "when_to_use": [
         "Any app where people sign in with an account the app itself stores."
       ],
@@ -502,7 +575,16 @@
         "users.read",
         "users.manage"
       ],
-      "ports": [],
+      "ports": [
+        {
+          "name": "Placements",
+          "required": false,
+          "description": "Who is placed in which company (an organization module). With it the users pages show only the people placed in the active company, and a new user is placed where they were created. Wired once every module is built (late).",
+          "adapters": [
+            "organization"
+          ]
+        }
+      ],
       "ui": [
         "ui-core",
         "ui-data",

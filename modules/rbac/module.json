@@ -1,6 +1,6 @@
 {
   "id": "rbac",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "kind": "fullstack",
   "title": "Roles and permissions (RBAC)",
   "summary": "Who may do what: roles hold permissions that modules declare, users hold roles per company — across it or in one branch. Fills the kernel's d.Authz (and Units for branches); Roles page with a per-module permission editor and members; Administrator role with every permission.",
@@ -31,6 +31,17 @@
         "users": {
           "file": "adapters/userdirectory_users.go",
           "expr": "rbacUserDirectory{users: usersModule.Client()}"
+        }
+      }
+    },
+    {
+      "name": "Placements",
+      "required": false,
+      "description": "Who is placed in which company (an organization module): an account with no role belongs where it is placed (Covers), and the member search lists the active company's people. Wired once every module is built (late).",
+      "adapters": {
+        "organization": {
+          "file": "adapters/placements_organization.go",
+          "expr": "rbacPlacements{organization: organizationModule.Client()}"
         }
       }
     }
@@ -97,11 +108,21 @@
       ],
       "after": [
         "d.Authz.Provide(rbacModule.Authorizer())"
+      ],
+      "late": [
+        "rbacModule.UsePlacements({{port:Placements}})"
       ]
     },
     "web": {
       "import": "@/modules/rbac/module",
       "export": "rbacModule"
     }
-  }
+  },
+  "listens": [
+    {
+      "event": "organization.company.created",
+      "subscriber": "rbac.appoint-founder",
+      "handler": "rbacModule.OnCompanyCreated"
+    }
+  ]
 }

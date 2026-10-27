@@ -103,7 +103,7 @@ func (h *Handler) updateProfile(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	p := pagination.FromRequest(r)
-	users, total, err := h.svc.List(r.Context(), strings.TrimSpace(r.URL.Query().Get("q")), p)
+	users, total, err := h.svc.ListHere(r.Context(), strings.TrimSpace(r.URL.Query().Get("q")), p)
 	if err != nil {
 		response.Error(w, r, err)
 		return
@@ -121,7 +121,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-	u, err := h.svc.Get(r.Context(), id)
+	u, err := h.svc.GetHere(r.Context(), id)
 	if err != nil {
 		response.Error(w, r, err)
 		return

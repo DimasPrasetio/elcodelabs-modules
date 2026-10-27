@@ -19,11 +19,13 @@ type Company struct {
 	Phone     string
 	Email     string
 	TaxID     string // NPWP
-	Timezone  string // IANA, e.g. "Asia/Jakarta"
-	HasLogo   bool
+	// Timezone is deprecated and unused: where a day starts follows kernel.Today — the scope's
+	// zone (a branch's or company's, from an organization module), else APP_TIMEZONE.
+	Timezone string
+	HasLogo  bool
 }
 
-// SettingsClient reads app-wide settings.
+// SettingsClient reads the settings of the company ctx works in.
 type SettingsClient interface {
 	Company(ctx context.Context) (Company, error)
 	// Logo opens the company logo (an image) with its content type, or ErrNoLogo.

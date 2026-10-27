@@ -14,6 +14,27 @@ WHERE sqlc.arg(search) = ''
    OR name LIKE CONCAT('%', sqlc.arg(search), '%')
    OR email LIKE CONCAT('%', sqlc.arg(search), '%');
 
+-- name: ListUsersIn :many
+SELECT id, name, email, is_active, created_at, updated_at
+FROM users
+WHERE id IN (sqlc.slice(ids))
+  AND (sqlc.arg(search) = ''
+   OR name LIKE CONCAT('%', sqlc.arg(search), '%')
+   OR email LIKE CONCAT('%', sqlc.arg(search), '%'))
+ORDER BY id DESC
+LIMIT ? OFFSET ?;
+
+-- name: CountUsersIn :one
+SELECT COUNT(*)
+FROM users
+WHERE id IN (sqlc.slice(ids))
+  AND (sqlc.arg(search) = ''
+   OR name LIKE CONCAT('%', sqlc.arg(search), '%')
+   OR email LIKE CONCAT('%', sqlc.arg(search), '%'));
+
+-- name: UserIDs :many
+SELECT id FROM users ORDER BY id;
+
 -- name: CountAllUsers :one
 SELECT COUNT(*) FROM users;
 

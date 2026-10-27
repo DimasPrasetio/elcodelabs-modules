@@ -59,7 +59,7 @@ func New(d *kernel.Deps, users ports.UserStore, passwords ports.PasswordWriter, 
 		Audit:   d.Audit, Log: d.Log, AppURL: appURL, AppName: d.Config.Name,
 	})
 	d.Jobs.Every("auth.cleanup", time.Hour, svc.Cleanup)
-	return &Module{handler: presentation.NewHandler(svc, d.Config.IsProduction())}, nil
+	return &Module{handler: presentation.NewHandler(svc, d.Config.IsProduction(), d.Auth.Require)}, nil
 }
 
 // Routes mounts /api/v1/auth.

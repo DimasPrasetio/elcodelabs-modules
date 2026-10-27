@@ -5,6 +5,8 @@ package rbac
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -45,6 +47,23 @@ func New(d *kernel.Deps, users ports.UserDirectory) (*Module, error) {
 		d.Log.Info("rbac: Administrator role given", "email", email)
 	}
 	return m, nil
+}
+
+// UsePlacements wires the optional Placements port — from register.go.late, once the provider
+// (an organization module) is built.
+func (m *Module) UsePlacements(p ports.Placements) { m.svc.UsePlacements(p) }
+
+// OnCompanyCreated makes a new company's creator its Administrator — the subscriber of
+// organization.company.created (v1), wired in registry.go from module.json "listens".
+func (m *Module) OnCompanyCreated(ctx context.Context, ev kernel.Event) error {
+	var p struct {
+		CompanyID int64 `json:"company_id"`
+		CreatedBy int64 `json:"created_by"`
+	}
+	if err := json.Unmarshal(ev.Payload, &p); err != nil {
+		return fmt.Errorf("rbac: %s: %w", ev.Name, err)
+	}
+	return m.svc.AppointFounder(ctx, p.CompanyID, p.CreatedBy)
 }
 
 // Routes mounts /api/v1/rbac.

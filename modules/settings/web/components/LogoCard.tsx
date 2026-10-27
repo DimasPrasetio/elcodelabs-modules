@@ -41,7 +41,7 @@ export function LogoCard({ company, onChange }: { company: Company; onChange: (c
       <div className="grid gap-4 sm:grid-cols-[160px_1fr] sm:items-center">
         <div className="flex aspect-square items-center justify-center overflow-hidden rounded-lg border border-border bg-background">
           {company.has_logo ? (
-            <img src={logoUrl(version)} alt="Logo perusahaan" className="max-h-full max-w-full object-contain p-3" />
+            <img src={logoUrl(company.company_id, version)} alt="Logo perusahaan" className="max-h-full max-w-full object-contain p-3" />
           ) : (
             <span className="px-3 text-center text-xs text-muted-foreground">Belum ada logo</span>
           )}

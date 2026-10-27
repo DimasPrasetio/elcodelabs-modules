@@ -1,0 +1,127 @@
+{
+  "id": "organization",
+  "version": "0.1.0",
+  "kind": "fullstack",
+  "title": "Organization (companies, branches, placements)",
+  "summary": "Several companies and their branches in one app: who is placed where, a company/branch picker in the header, and the kernel's scope resolver (d.Scope) — every request works in one company and, optionally, one branch, in its time zone. Offers OrganizationClient.",
+  "when_to_use": [
+    "One app serves several companies (legal entities), or one company with branches whose people must work only in their own branch.",
+    "Business dates must follow a branch's time zone (WIB, WITA, WIT)."
+  ],
+  "when_not_to_use": [
+    "One company with no branches — without this module every request already works in company 1.",
+    "Departments, positions, and reporting lines — those belong to an HR module."
+  ],
+  "stacks": [
+    "go"
+  ],
+  "requires_kernel": 6,
+  "provides": {
+    "contracts": [
+      "OrganizationClient"
+    ],
+    "kernel": [
+      "scope"
+    ]
+  },
+  "ports": [
+    {
+      "name": "UserDirectory",
+      "required": true,
+      "description": "Get users by ID or email, search them, and list every ID — to place people and show who is placed where.",
+      "adapters": {
+        "users": {
+          "file": "adapters/userdirectory_users.go",
+          "expr": "organizationUserDirectory{users: usersModule.Client()}",
+          "requires": "0.7.0"
+        }
+      }
+    }
+  ],
+  "ui": [
+    "ui-core",
+    "ui-data",
+    "ui-forms",
+    "ui-feedback"
+  ],
+  "permissions": [
+    {
+      "name": "organization.read",
+      "description": "Melihat cabang dan penempatan pengguna"
+    },
+    {
+      "name": "organization.manage",
+      "description": "Mengelola cabang dan menempatkan pengguna"
+    },
+    {
+      "name": "organization.companies",
+      "description": "Membuat, mengubah, dan menonaktifkan perusahaan (dari perusahaan induk)"
+    }
+  ],
+  "owns_tables": [
+    "org_companies",
+    "org_branches",
+    "org_placements"
+  ],
+  "emits": [
+    {
+      "name": "organization.company.created",
+      "version": 1,
+      "description": "A company was created: {company_id, code, name, created_by}. Its creator is already placed across it."
+    }
+  ],
+  "env": [],
+  "routes": {
+    "api": [
+      "GET /api/v1/organization/me",
+      "PUT /api/v1/organization/me/default",
+      "GET /api/v1/organization/companies",
+      "POST /api/v1/organization/companies",
+      "PUT /api/v1/organization/companies/{id}",
+      "POST /api/v1/organization/companies/{id}/deactivate",
+      "POST /api/v1/organization/companies/{id}/activate",
+      "POST /api/v1/organization/companies/{id}/placements",
+      "GET /api/v1/organization/unplaced",
+      "GET /api/v1/organization/branches",
+      "POST /api/v1/organization/branches",
+      "PUT /api/v1/organization/branches/{id}",
+      "POST /api/v1/organization/branches/{id}/deactivate",
+      "POST /api/v1/organization/branches/{id}/activate",
+      "GET /api/v1/organization/placements",
+      "POST /api/v1/organization/placements",
+      "DELETE /api/v1/organization/placements/{userId}",
+      "GET /api/v1/organization/candidates"
+    ],
+    "web": [
+      "/organization",
+      "/organization/placements",
+      "/organization/companies"
+    ]
+  },
+  "npm_dependencies": {},
+  "install": {
+    "api": "apps/api/internal/modules/organization",
+    "web": "apps/web/src/modules/organization"
+  },
+  "register": {
+    "go": {
+      "import": "internal/modules/organization",
+      "build": [
+        "organizationModule, err := organization.New(d, {{port:UserDirectory}})",
+        "if err != nil {",
+        "\treturn err",
+        "}"
+      ],
+      "routes": [
+        "organizationModule.Routes(mux)"
+      ],
+      "after": [
+        "d.Scope.Provide(organizationModule.Resolver())"
+      ]
+    },
+    "web": {
+      "import": "@/modules/organization/module",
+      "export": "organizationModule"
+    }
+  }
+}
