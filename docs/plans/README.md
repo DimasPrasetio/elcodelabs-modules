@@ -21,3 +21,4 @@ A plan has, in this order:
 |---|---|---|
 | [PLAN-MODUL-ORGANIZATION](PLAN-MODUL-ORGANIZATION.md) | `organization` | released 0.1.0 |
 | [PLAN-FONDASI-DOKUMEN](PLAN-FONDASI-DOKUMEN.md) | `money`, `docstate`, `period`, `numbering` | released 0.1.0 |
+| [PLAN-MODUL-PELANGGAN-PEMASOK](PLAN-MODUL-PELANGGAN-PEMASOK.md) | `customers`, `suppliers`, `taxid` | disetujui K1–K9 — belum dibangun |
