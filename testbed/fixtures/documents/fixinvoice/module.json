@@ -1,0 +1,41 @@
+{
+  "id": "fixinvoice",
+  "version": "0.1.0",
+  "kind": "backend",
+  "title": "Fixture invoices",
+  "summary": "Testbed fixture: invoices that follow the docstate posting recipe — money amounts, a discount allocated over lines, a gapless number from numbering, the period lock, stock taken in the same d.Tx, cancel and amend.",
+  "when_to_use": ["Never in a project: the testbed proves the document foundations with it."],
+  "when_not_to_use": ["Always."],
+  "stacks": ["go"],
+  "requires_kernel": 6,
+  "install": { "api": "apps/api/internal/modules/fixinvoice" },
+  "go_kits": ["money", "docstate"],
+  "scoped": true,
+  "owns_tables": ["fix_invoices", "fix_invoice_lines", "fix_stock"],
+  "permissions": [{ "name": "fixinvoice.manage", "description": "Fixture: mengelola faktur" }],
+  "emits": [
+    { "name": "fixinvoice.invoice.posted", "version": 1, "description": "An invoice was posted: {id, number, total}." },
+    { "name": "fixinvoice.invoice.cancelled", "version": 1, "description": "A posted invoice was cancelled: {id, number, reason}." }
+  ],
+  "ports": [
+    {
+      "name": "Numbers",
+      "required": true,
+      "description": "Declare the invoice's number format and take the next number, inside the posting's transaction.",
+      "adapters": { "numbering": { "file": "adapters/numbers_numbering.go", "expr": "fixinvoiceNumbers{numbering: numberingModule.Client()}" } }
+    },
+    {
+      "name": "Periods",
+      "required": true,
+      "description": "Declare the sales area and refuse dates in a closed period.",
+      "adapters": { "period": { "file": "adapters/periods_period.go", "expr": "fixinvoicePeriods{period: periodModule.Client()}" } }
+    }
+  ],
+  "register": {
+    "go": {
+      "import": "internal/modules/fixinvoice",
+      "build": ["fixinvoiceModule := fixinvoice.New(d, {{port:Numbers}}, {{port:Periods}})"],
+      "routes": ["fixinvoiceModule.Routes(mux)"]
+    }
+  }
+}

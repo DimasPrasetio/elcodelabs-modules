@@ -1,0 +1,21 @@
+{
+  "id": "docstate",
+  "version": "0.1.0",
+  "kind": "gokit",
+  "title": "Document lifecycle (Go kit)",
+  "summary": "The life of a business document — draft, posted, cancelled, amended — as one set of rules every document module shares: which actions each status allows, a required reason to cancel, amendment numbers (INV-0007-1), the lifecycle columns, and the guarded UPDATE that stops two people posting the same draft.",
+  "when_to_use": [
+    "A module whose documents are posted and then never edited (invoices, orders, receipts, payslips, stock moves)."
+  ],
+  "when_not_to_use": [
+    "Master data (customers, items) — it is edited and deactivated, never posted.",
+    "Multi-step approvals before posting — that is an approvals module; it runs before docstate's post."
+  ],
+  "stacks": [
+    "go"
+  ],
+  "requires_kernel": 6,
+  "install": {
+    "lib": "apps/api/internal/shared/docstate"
+  }
+}

@@ -556,7 +556,14 @@ function checkMigrations(root, id, m, problem) {
       continue;
     }
     numbers.set(mm[1], [...(numbers.get(mm[1]) ?? []), mm[2]]);
-    const sql = readFileSync(join(root, "modules", id, "migrations", f), "utf8").replace(/--.*$/gm, "");
+    const raw = readFileSync(join(root, "modules", id, "migrations", f), "utf8");
+    raw.split("\n").forEach((ln, i) => {
+      const [code, note = ""] = ln.split("--");
+      if (/\b(?:FLOAT|DOUBLE|REAL)\b/i.test(code) && !/^\s*float:\s*\S/.test(note)) {
+        problem(at, `exact-numbers: migrations/${f}:${i + 1} declares a FLOAT/DOUBLE/REAL column — money and quantities are DECIMAL (money kit); a column that truly needs a float ends its line with "-- float: <why>"`);
+      }
+    });
+    const sql = raw.replace(/--.*$/gm, "");
     const touched = [
       ...[...sql.matchAll(/\b(?:CREATE|ALTER|DROP|RENAME)\s+TABLE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?`?(\w+)`?/gi)].map((x) => x[1]),
       ...[...sql.matchAll(/\b(?:INSERT\s+INTO|(?<!\b(?:ON|KEY|FOR)\s+)UPDATE|DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?)\s+`?(\w+)`?/gi)].map((x) => x[1]),

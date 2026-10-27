@@ -1,0 +1,85 @@
+{
+  "id": "period",
+  "version": "0.1.0",
+  "kind": "fullstack",
+  "title": "Period (closing the books)",
+  "summary": "Closing the books per company: a date through which every area, or one area (sales, purchasing, payroll …), is closed, so documents dated in it are neither posted nor cancelled; reopening needs its own permission and a reason, audited. The fiscal year's first month per company. Offers PeriodClient.",
+  "when_to_use": [
+    "Documents are posted (invoices, receipts, payslips, stock moves) and a month, once reported, must not change."
+  ],
+  "when_not_to_use": [
+    "Only master data, no posted documents.",
+    "A lock that nobody may ever reopen (a hard lock) — not in this version."
+  ],
+  "stacks": [
+    "go"
+  ],
+  "requires_kernel": 6,
+  "provides": {
+    "contracts": [
+      "PeriodClient"
+    ],
+    "kernel": []
+  },
+  "ports": [],
+  "ui": [
+    "ui-core",
+    "ui-forms",
+    "ui-feedback"
+  ],
+  "permissions": [
+    {
+      "name": "period.read",
+      "description": "Melihat tanggal tutup buku"
+    },
+    {
+      "name": "period.manage",
+      "description": "Menutup buku dan mengatur tahun buku"
+    },
+    {
+      "name": "period.unlock",
+      "description": "Membuka kembali buku yang sudah ditutup"
+    }
+  ],
+  "scoped": true,
+  "owns_tables": [
+    "period_locks",
+    "period_settings"
+  ],
+  "env": [],
+  "routes": {
+    "api": [
+      "GET /api/v1/period/locks",
+      "PUT /api/v1/period/locks/{area}",
+      "PUT /api/v1/period/fiscal-year"
+    ],
+    "web": [
+      "/period"
+    ]
+  },
+  "npm_dependencies": {},
+  "go_dependencies": {},
+  "install": {
+    "api": "apps/api/internal/modules/period",
+    "web": "apps/web/src/modules/period"
+  },
+  "register": {
+    "go": {
+      "import": "internal/modules/period",
+      "build": [
+        "periodModule, err := period.New(d)",
+        "if err != nil {",
+        "\treturn err",
+        "}"
+      ],
+      "routes": [
+        "periodModule.Routes(mux)"
+      ],
+      "after": []
+    },
+    "web": {
+      "import": "@/modules/period/module",
+      "export": "periodModule"
+    }
+  }
+}

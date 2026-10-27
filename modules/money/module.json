@@ -1,0 +1,24 @@
+{
+  "id": "money",
+  "version": "0.1.0",
+  "kind": "gokit",
+  "title": "Money (Go kit)",
+  "summary": "Exact money, quantity, and rate arithmetic for Rupiah: Amount (DECIMAL(19,2)), Qty (DECIMAL(19,4)), Rate (up to 10 decimals) as distinct types; one rounding at the end, chosen by the caller (half-up by default); allocation that always adds up to the total; id-ID formatting; database and JSON (as strings) built in.",
+  "when_to_use": [
+    "Any module that stores or computes prices, totals, taxes, discounts, quantities, or rates."
+  ],
+  "when_not_to_use": [
+    "Foreign currencies — Rupiah only in this version (the first module that needs another currency adds it).",
+    "Tax rules themselves (when DPP 11/12 applies, how PPN rounds) — those belong to a tax module, which uses this kit."
+  ],
+  "stacks": [
+    "go"
+  ],
+  "requires_kernel": 6,
+  "go_dependencies": {
+    "github.com/govalues/decimal": "v0.1.36"
+  },
+  "install": {
+    "lib": "apps/api/internal/shared/money"
+  }
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Testbed — proves the library's modules install into a fresh project and work.
 //
-// Seven scenarios, each in its own fresh project: a copy of the pinned kernel host (kernel/host,
+// Eight scenarios, each in its own fresh project: a copy of the pinned kernel host (kernel/host,
 // scaffolded by a released monorepo-elcodelabs — see kernel/README.md), so nothing outside this
 // repository is needed:
 //   full        preset bingkai-navy + ui-core + app-shell + users + auth + rbac (ports ← users)
@@ -12,6 +12,8 @@
 //   kernel6     fixture modules: one d.Tx across modules, durable events, scope, a Go kit, schedules
 //   organization every module + organization added later, its late ports wired with module.mjs:
 //               several companies and branches against MySQL
+//   documents   money, docstate, numbering, period through a fixture invoice module: exact
+//               amounts, gapless numbers from two containers at once, closing the books
 // Each: install → npm install → go mod tidy → sqlc generate → gofmt → go vet → go test →
 // build:web → build:api → run the binary and call the API.
 //
@@ -1229,7 +1231,264 @@ async function organization() {
   }
 }
 
-const scenarios = { full, "no-rbac": noRbac, "auth-alone": authAlone, "users-alone": usersAlone, lifecycle, kernel6, organization };
+// The document foundations: money, docstate, numbering, period — through the fixture invoice
+// module, against MySQL, with two containers posting at once.
+async function documents() {
+  log("\n=== documents: money, docstate, numbering, period — the posting recipe end to end ===");
+  const lib = mkdtempSync(join(LIB, ".testbed", "libdoc-"));
+  const dir = scaffold("documents");
+  const g = (...a) => spawnSync("git", ["-C", lib, ...a], { encoding: "utf8" });
+  const cli = (...a) => spawnSync(process.execPath, [join(lib, "scripts/module.mjs"), ...a, "--project", dir], { encoding: "utf8" });
+  let api;
+  let api2;
+  try {
+    for (const p of ["modules", "themes", "scripts", "docs", "kernel"]) cpSync(join(LIB, p), join(lib, p), { recursive: true });
+    for (const f of [".gitignore", ".gitattributes"]) cpSync(join(LIB, f), join(lib, f));
+    cpSync(join(LIB, "testbed/fixtures/documents/fixinvoice"), join(lib, "modules/fixinvoice"), { recursive: true });
+    g("init", "-q", "-b", "main");
+    g("add", "-A");
+    g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "library + documents fixture");
+    spawnSync(process.execPath, [join(lib, "scripts/catalog.mjs")], { cwd: lib, encoding: "utf8" });
+    const check = () => spawnSync(process.execPath, [join(lib, "scripts/catalog.mjs"), "--check"], { cwd: lib, encoding: "utf8" });
+    let r = check();
+    expect("the fixture (two Go kits, two required ports) passes the architecture rules", r.status === 0, r.stderr);
+    const mig = join(lib, "modules/fixinvoice/migrations/001_create_fixinvoice.up.sql");
+    const migSrc = readFileSync(mig, "utf8");
+    writeFileSync(mig, migSrc + "\nALTER TABLE fix_stock ADD COLUMN weight DOUBLE NOT NULL DEFAULT 0;\n");
+    r = check();
+    expect("refused: a DOUBLE column (exact-numbers)", r.status === 1 && r.stderr.includes("exact-numbers"), r.stderr);
+    writeFileSync(mig, migSrc + "\nALTER TABLE fix_stock ADD COLUMN lat DOUBLE NULL; -- float: a map coordinate\n");
+    expect("accepted: a float column that says why", check().status === 0);
+    writeFileSync(mig, migSrc);
+
+    for (const [id, opts] of [
+      ["app-shell"], ["users"],
+      ["auth", { ports: { UserStore: "users", PasswordWriter: "users" } }],
+      ["rbac", { ports: { UserDirectory: "users" } }],
+      ["organization", { ports: { UserDirectory: "users" } }],
+      ["audit-log", { ports: { UserDirectory: "users" } }],
+      ["period"],
+      ["numbering", { ports: { Units: "organization" } }],
+      ["fixinvoice", { ports: { Numbers: "numbering", Periods: "period" } }],
+    ]) installModule(lib, dir, id, opts);
+    r = cli("upgrade", "users", "--port", "Placements=organization");
+    expect("users' late Placements port wired to organization", r.status === 0, r.stdout + r.stderr);
+    r = cli("upgrade", "rbac", "--port", "Placements=organization");
+    expect("…and rbac's", r.status === 0, r.stdout + r.stderr);
+    expect("the Go kits came along with the fixture that declares them",
+      existsSync(join(dir, "apps/api/internal/shared/money/money.go")) && existsSync(join(dir, "apps/api/internal/shared/docstate/docstate.go")));
+    expect("money's decimal library is pinned in go.mod", readFileSync(join(dir, "apps/api/go.mod"), "utf8").includes("github.com/govalues/decimal v0.1.36"));
+    if (!build(dir)) return;
+    if (!DB_DSN) {
+      skip("documents: API checks against MySQL — set TESTBED_DB_DSN");
+      return;
+    }
+    const db = parseDsn(DB_DSN);
+    const name = `elco_testbed_doc_${Date.now()}`;
+    try {
+      const dsn = freshDatabase(dir, db, name);
+      const env = { DB_DSN: dsn, USERS_BOOTSTRAP_EMAIL: "admin@example.com", USERS_BOOTSTRAP_PASSWORD: "admin-pass-123", APP_TIMEZONE: "Asia/Jakarta" };
+      const [p1, p2] = [18101, 18102];
+      api = await startApi(dir, p1, env);
+      api2 = await startApi(dir, p2, env);
+      const q = (sql) => mysqlQuery(db, sql, name);
+      const signIn = async (port, email, password) => {
+        const c = client(port);
+        const res = await c.call("POST", "/api/v1/auth/login", { email, password });
+        expect(`${email} signs in on :${port}`, res.status === 200, res.body);
+        return c;
+      };
+      const admin = await signIn(p1, "admin@example.com", "admin-pass-123");
+      const admin2 = await signIn(p2, "admin@example.com", "admin-pass-123");
+      const at = (scope) => (scope ? { "X-Scope": scope } : {});
+      const INV = "/api/v1/fixinvoice/invoices";
+      const draft = async (c, date, lines, scope, discount = "0") => {
+        const res = await c.call("POST", INV, { date, discount, lines }, at(scope));
+        if (res.status !== 201) fail(`draft ${date}: ${JSON.stringify(res.body)}`);
+        return res.body.data;
+      };
+      const post = (c, id, scope, query = "") => c.call("POST", `${INV}/${id}/post${query}`, undefined, at(scope));
+      const one = [{ sku: "A", qty: "1", price: "1000" }];
+      const wib = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+
+      // Money: exact through JSON, Go, and DECIMAL columns; the discount split adds up.
+      expect("stock added", (await admin.call("POST", "/api/v1/fixinvoice/stock", { sku: "A", qty: "1000" })).status === 201);
+      let inv = await draft(admin, "2025-01-10", [{ sku: "A", qty: "3", price: "0.10" }, { sku: "A", qty: "1", price: "1000000.05" }, { sku: "A", qty: "2.5", price: "3333.33" }], undefined, "0.10");
+      expect("line amounts are exact and rounded once, half-up (0.10 × 3 = 0.30; 3333.33 × 2.5 = 8333.325 → 8333.33)",
+        inv?.lines?.[0]?.amount === "0.30" && inv.lines[2].amount === "8333.33" && inv.total === "1008333.58", inv);
+      expect("the DECIMAL columns hold exactly that", q(`SELECT CONCAT(total, '|', discount) FROM fix_invoices WHERE id = ${inv.id}`) === "1008333.58|0.10");
+      expect("the discount allocated over the lines adds up to the discount, to the sen",
+        q(`SELECT SUM(discount_share) FROM fix_invoice_lines WHERE invoice_id = ${inv.id}`) === "0.10" &&
+        q(`SELECT SUM(amount) - (SELECT discount FROM fix_invoices WHERE id = ${inv.id}) FROM fix_invoice_lines WHERE invoice_id = ${inv.id}`) === "1008333.58");
+      let res = await admin.call("POST", INV, { date: "2025-01-10", discount: "0", lines: [{ sku: "A", qty: "1", price: "1.005" }] });
+      expect("a price with three decimals is refused, naming the field — never rounded silently", res.status === 400 && /lines\.price/.test(res.body.message), res.body);
+
+      // Numbering: previews take nothing; posting takes the next number.
+      res = await admin.call("GET", "/api/v1/numbering/types");
+      const type = res.body?.data?.types?.find((t) => t.doc_type === "fixinvoice.invoice");
+      expect("the fixture's document type is declared, with a preview", res.status === 200 && type?.series?.[0]?.next?.endsWith("/0001"), res.body);
+      res = await post(admin, inv.id);
+      expect("posting gives INV/2025/01/0001 — from the document's date, not today", res.status === 200 && res.body.data.number === "INV/2025/01/0001" && res.body.data.status === "posted", res.body);
+      const first = inv.id;
+
+      // The lifecycle.
+      res = await admin.call("PUT", `${INV}/${first}`, { date: "2025-01-10", discount: "0", lines: one });
+      expect("a posted invoice cannot be edited (409, saying what to do)", res.status === 409 && /batalkan lalu buat revisinya/.test(res.body.message), res.body);
+      expect("…nor deleted (409)", (await admin.call("DELETE", `${INV}/${first}`)).status === 409);
+
+      // Gapless: a posting that fails after taking its number gives it back.
+      const tooMuch = await draft(admin, "2025-01-11", [{ sku: "A", qty: "5000", price: "1" }]);
+      res = await post(admin, tooMuch.id);
+      expect("a posting refused for stock → 409, nothing taken", res.status === 409 && /Stok/.test(res.body.message), res.body);
+      const failing = await draft(admin, "2025-01-11", one);
+      res = await post(admin, failing.id, undefined, "?fail_after_number=1");
+      expect("a posting that fails after taking INV/2025/01/0002 → 409", res.status === 409, res.body);
+      expect("…and the number went back with the rollback (counter and record of numbers given)",
+        q("SELECT last_number FROM num_counters WHERE company_id = 1 AND period_key = '2025-01'") === "1" &&
+        q("SELECT COUNT(*) FROM num_issued WHERE company_id = 1 AND number = 'INV/2025/01/0002'") === "0");
+      const third = await draft(admin, "2025-01-11", one);
+      res = await post(admin, third.id);
+      expect("the next posting gets that number: INV/2025/01/0002", res.body?.data?.number === "INV/2025/01/0002", res.body);
+
+      res = await admin.call("POST", `${INV}/${first}/cancel`, { reason: "  " });
+      expect("cancelling without a reason → 422", res.status === 422, res.body);
+      res = await admin.call("POST", `${INV}/${first}/cancel`, { reason: "salah harga" });
+      expect("cancelled with a reason", res.status === 200 && res.body.data.status === "cancelled" && res.body.data.cancel_reason === "salah harga", res.body);
+      res = await admin.call("POST", `${INV}/${first}/amend`);
+      const amended = res.body?.data;
+      expect("amending starts a draft INV/2025/01/0001-1 pointing at the cancelled one",
+        res.status === 200 && amended.status === "draft" && amended.number === "INV/2025/01/0001-1" && amended.amended_from === first && amended.revision === 1 && amended.lines.length === 3, res.body);
+      expect("a cancelled invoice is amended once (409)", (await admin.call("POST", `${INV}/${first}/amend`)).status === 409);
+      res = await post(admin, amended.id);
+      expect("the amendment posts under its own number and takes none from the series",
+        res.body?.data?.number === "INV/2025/01/0001-1" && q("SELECT last_number FROM num_counters WHERE company_id = 1 AND period_key = '2025-01'") === "2", res.body);
+
+      // 50 postings at once, from two containers: 1…50, no duplicate, no gap.
+      const feb = [];
+      for (let i = 0; i < 50; i++) feb.push(await draft(admin, `2025-02-${String(1 + (i % 28)).padStart(2, "0")}`, one));
+      const t0 = Date.now();
+      const results = await Promise.all(feb.map((d, i) => post(i % 2 ? admin2 : admin, d.id)));
+      const numbers = results.map((x) => x.body?.data?.number).filter(Boolean).sort();
+      const want = Array.from({ length: 50 }, (_, i) => `INV/2025/02/${String(i + 1).padStart(4, "0")}`);
+      expect(`50 concurrent postings from two containers → INV/2025/02/0001…0050, no duplicate, no gap (${Date.now() - t0} ms)`,
+        results.every((x) => x.status === 200) && JSON.stringify(numbers) === JSON.stringify(want), results.filter((x) => x.status !== 200).map((x) => x.body).slice(0, 3));
+
+      // Reset per month, per branch, and formats that would repeat a number.
+      const mar = await draft(admin, "2025-03-01", one);
+      expect("a new month starts again: INV/2025/03/0001", (await post(admin, mar.id)).body?.data?.number === "INV/2025/03/0001");
+      res = await admin.call("PUT", "/api/v1/numbering/types/fixinvoice.invoice", { pattern: "INV/{SEQ:4}", reset: "yearly", per_branch: false });
+      expect("a yearly reset without the year in the pattern is refused (422)", res.status === 422, res.body);
+      res = await admin.call("PUT", "/api/v1/numbering/types/fixinvoice.invoice", { pattern: "INV/{YYYY}/{SEQ:4}", reset: "monthly", per_branch: true });
+      expect("a per-branch format without {BRANCH} is refused (422)", res.status === 422, res.body);
+      res = await admin.call("PUT", "/api/v1/numbering/types/fixinvoice.invoice", { pattern: "INV/{YYYY}/{MM}/{SEQ:4}", reset: "yearly", per_branch: false });
+      expect("once numbers were given, a new reset (which would print INV/2025/01/0001 again) is refused (409)", res.status === 409, res.body);
+      res = await admin.call("PUT", "/api/v1/numbering/types/fixinvoice.invoice", { pattern: "FJ-{YYYY}{MM}-{SEQ:4}", reset: "monthly", per_branch: false });
+      expect("…but the pattern may change", res.status === 200, res.body);
+      const marFj = await draft(admin, "2025-03-03", one);
+      expect("the series continues under the new pattern: FJ-202503-0002", (await post(admin, marFj.id)).body?.data?.number === "FJ-202503-0002");
+      expect("the format back to the module's default", (await admin.call("DELETE", "/api/v1/numbering/types/fixinvoice.invoice")).status === 200);
+
+      // Closing the books.
+      res = await admin.call("POST", "/api/v1/rbac/roles", { name: "Akuntan", description: "", permissions: ["period.read", "period.manage", "fixinvoice.manage"] });
+      const accountantRole = res.body?.data?.id;
+      res = await admin.call("POST", "/api/v1/users", { name: "Akuntan", email: "akuntan@example.com", password: "akuntan-pass-123" });
+      expect("an accountant who may close but not reopen", res.status === 201 && (await admin.call("POST", `/api/v1/rbac/roles/${accountantRole}/members`, { user_id: res.body.data.id })).status === 201, res.body);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const acc = await signIn(p1, "akuntan@example.com", "akuntan-pass-123");
+      const lock = (c, area, through, reason = "", scope) => c.call("PUT", `/api/v1/period/locks/${encodeURIComponent(area)}`, { locked_through: through, reason }, at(scope));
+      res = await lock(acc, "sales", "2025-01-31");
+      expect("the accountant closes January for sales", res.status === 200, res.body);
+      res = await post(acc, tooMuch.id);
+      expect("posting a January invoice now → 409, naming the lock date", res.status === 409 && /31 Januari 2025/.test(res.body.message), res.body);
+      res = await acc.call("POST", `${INV}/${third.id}/cancel`, { reason: "salah pelanggan" });
+      expect("…and cancelling one → 409 (closed books do not change)", res.status === 409, res.body);
+      const lateFeb = await draft(admin, "2025-02-20", one);
+      res = await lock(acc, "*", "2025-02-28");
+      expect("every area closed through February", res.status === 200, res.body);
+      expect("a February invoice is refused by the company-wide lock", (await post(admin, lateFeb.id)).status === 409);
+      res = await lock(acc, "sales", "2025-02-15");
+      expect("an area lock earlier than the company-wide one is refused (422)", res.status === 422, res.body);
+      res = await lock(acc, "*", "2025-01-31", "faktur Februari tertinggal");
+      expect("reopening without period.unlock → 403", res.status === 403, res.body);
+      res = await lock(admin, "*", "2025-01-31");
+      expect("reopening without a reason → 422", res.status === 422, res.body);
+      res = await lock(admin, "*", "2025-01-31", "faktur Februari tertinggal");
+      expect("reopening with period.unlock and a reason", res.status === 200, res.body);
+      expect("…recorded as a security event with its reason",
+        q("SELECT COUNT(*) FROM audit_log WHERE module = 'period' AND action = 'lock.reopened' AND kind = 'security' AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.reason')) = 'faktur Februari tertinggal'") === "1");
+      res = await post(admin, lateFeb.id);
+      expect("February posts again — continuing its series: INV/2025/02/0051", res.body?.data?.number === "INV/2025/02/0051", res.body);
+      res = await lock(admin, "sales", wib);
+      expect("a lock through today (or later) is refused (422)", res.status === 422, res.body);
+
+      // A lock moved while a posting runs: the lock waits for the posting.
+      const apr = await draft(admin, "2025-04-10", one);
+      const tPost = Date.now();
+      const posting = post(admin, apr.id, undefined, "?hold_ms=2000").then((x) => ({ ...x, done: Date.now() }));
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const moving = lock(acc, "sales", "2025-04-30").then((x) => ({ ...x, done: Date.now() }));
+      const [pr, mv] = await Promise.all([posting, moving]);
+      expect("the posting in flight finished, and the lock moved only after it committed",
+        pr.status === 200 && mv.status === 200 && mv.done >= pr.done - 50 && pr.done - tPost >= 1900, { post: pr.status, lock: mv.status, gap: mv.done - pr.done });
+      const apr2 = await draft(admin, "2025-04-11", one);
+      expect("…and once moved, April is closed (409)", (await post(admin, apr2.id)).status === 409);
+
+      // Another company: its own series, its own locks.
+      res = await admin.call("POST", "/api/v1/organization/companies", { code: "PT-B", name: "PT B", timezone: "Asia/Jakarta" });
+      const b = res.body?.data?.id;
+      const founder = await waitFor(async () => {
+        const p = await admin.call("GET", "/api/v1/rbac/me", undefined, at(String(b)));
+        return p.status === 200 && p.body.data.permissions.includes("fixinvoice.manage") ? "ok" : undefined;
+      }, 15000);
+      expect("company B, with its creator as Administrator", founder === "ok");
+      expect("stock in B", (await admin.call("POST", "/api/v1/fixinvoice/stock", { sku: "A", qty: "5" }, at(String(b)))).status === 201);
+      res = await admin.call("POST", "/api/v1/organization/branches", { code: "SBY", name: "Surabaya", timezone: "", nitku: "", address: "" }, at(String(b)));
+      const sby = res.body?.data?.id;
+      expect("B's branch Surabaya", res.status === 201, res.body);
+      res = await admin.call("PUT", "/api/v1/numbering/types/fixinvoice.invoice", { pattern: "INV/{BRANCH}/{YYYY}/{MM}/{SEQ:4}", reset: "monthly", per_branch: true }, at(String(b)));
+      expect("B has given no number yet: it may count per branch (company 1's numbers are not B's)", res.status === 200, res.body);
+      const inB = await draft(admin, "2025-01-15", one, String(b));
+      res = await post(admin, inB.id, String(b));
+      expect("B's January is open and counts from 1, under B's code: INV/PT-B/2025/01/0001", res.status === 200 && res.body.data.number === "INV/PT-B/2025/01/0001", res.body);
+      const inSby = await draft(admin, "2025-01-15", one, `${b}:${sby}`);
+      res = await post(admin, inSby.id, `${b}:${sby}`);
+      expect("Surabaya counts on its own: INV/SBY/2025/01/0001", res.body?.data?.number === "INV/SBY/2025/01/0001", res.body);
+      res = await admin.call("PUT", "/api/v1/numbering/types/fixinvoice.invoice/next", { branch_id: sby, next: 500, reason: "lanjut dari sistem lama" }, at(String(b)));
+      expect("the next number of Surabaya's series raised (this period)", res.status === 200, res.body);
+      res = await admin.call("PUT", "/api/v1/numbering/types/fixinvoice.invoice/next", { branch_id: sby, next: 10, reason: "turunkan nomor" }, at(String(b)));
+      expect("…never lowered (422)", res.status === 422, res.body);
+      res = await admin.call("PUT", "/api/v1/numbering/types/fixinvoice.invoice/next", { branch_id: sby, next: 9223372036854775000, reason: "salah ketik" }, at(String(b)));
+      expect("…nor past the counter's limit (422)", res.status === 422, res.body);
+      const todaySby = await draft(admin, wib, one, `${b}:${sby}`);
+      res = await post(admin, todaySby.id, `${b}:${sby}`);
+      expect("a posting today continues from it", res.body?.data?.number === `INV/SBY/${wib.slice(0, 4)}/${wib.slice(5, 7)}/0500`, res.body);
+      expect("raising it is a security record", q("SELECT COUNT(*) FROM audit_log WHERE module = 'numbering' AND action = 'counter.raised' AND kind = 'security'") === "1");
+      res = await admin.call("GET", "/api/v1/numbering/types", undefined, at(`${b}:${sby}`));
+      expect("in a branch, the page offers no format change (that needs the whole company)", res.status === 200 && res.body.data.manage_formats === false, res.body);
+      res = await admin.call("GET", "/api/v1/period/locks", undefined, at(String(b)));
+      expect("B has none of company 1's locks", res.status === 200 && res.body.data.areas.every((a) => a.effective === null), res.body);
+      expect("company 1's invoice is not found from B (404)", (await admin.call("GET", `${INV}/${first}`, undefined, at(String(b)))).status === 404);
+      expect("no duplicate number anywhere", q("SELECT COUNT(*) - COUNT(DISTINCT company_id, number) FROM fix_invoices WHERE number IS NOT NULL") === "0");
+      expect("no panic in either container", !/panic/i.test(api.output() + api2.output()));
+    } finally {
+      stopApi(api);
+      stopApi(api2);
+      api = api2 = undefined;
+      try { mysql(db, `DROP DATABASE IF EXISTS ${name};`); } catch {}
+    }
+  } catch (err) {
+    fail(`documents: ${err.message}`);
+  } finally {
+    stopApi(api);
+    stopApi(api2);
+    if (!KEEP) {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(lib, { recursive: true, force: true });
+    }
+  }
+}
+
+const scenarios = { full, "no-rbac": noRbac, "auth-alone": authAlone, "users-alone": usersAlone, lifecycle, kernel6, organization, documents };
 for (const [name, fn] of Object.entries(scenarios)) {
   if (!ONLY || ONLY === name) await fn();
 }
