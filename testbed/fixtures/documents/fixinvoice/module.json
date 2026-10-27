@@ -1,41 +1,95 @@
 {
   "id": "fixinvoice",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "kind": "backend",
   "title": "Fixture invoices",
-  "summary": "Testbed fixture: invoices that follow the docstate posting recipe — money amounts, a discount allocated over lines, a gapless number from numbering, the period lock, stock taken in the same d.Tx, cancel and amend.",
-  "when_to_use": ["Never in a project: the testbed proves the document foundations with it."],
-  "when_not_to_use": ["Always."],
-  "stacks": ["go"],
+  "summary": "Testbed fixture: invoices that follow the docstate posting recipe — money amounts, a discount allocated over lines, a gapless number from numbering, the period lock, stock taken in the same d.Tx, cancel and amend; an optional customer checked and copied through a port.",
+  "when_to_use": [
+    "Never in a project: the testbed proves the document foundations with it."
+  ],
+  "when_not_to_use": [
+    "Always."
+  ],
+  "stacks": [
+    "go"
+  ],
   "requires_kernel": 6,
-  "install": { "api": "apps/api/internal/modules/fixinvoice" },
-  "go_kits": ["money", "docstate"],
+  "install": {
+    "api": "apps/api/internal/modules/fixinvoice"
+  },
+  "go_kits": [
+    "money",
+    "docstate"
+  ],
   "scoped": true,
-  "owns_tables": ["fix_invoices", "fix_invoice_lines", "fix_stock"],
-  "permissions": [{ "name": "fixinvoice.manage", "description": "Fixture: mengelola faktur" }],
+  "owns_tables": [
+    "fix_invoices",
+    "fix_invoice_lines",
+    "fix_stock"
+  ],
+  "permissions": [
+    {
+      "name": "fixinvoice.manage",
+      "description": "Fixture: mengelola faktur"
+    }
+  ],
   "emits": [
-    { "name": "fixinvoice.invoice.posted", "version": 1, "description": "An invoice was posted: {id, number, total}." },
-    { "name": "fixinvoice.invoice.cancelled", "version": 1, "description": "A posted invoice was cancelled: {id, number, reason}." }
+    {
+      "name": "fixinvoice.invoice.posted",
+      "version": 1,
+      "description": "An invoice was posted: {id, number, total}."
+    },
+    {
+      "name": "fixinvoice.invoice.cancelled",
+      "version": 1,
+      "description": "A posted invoice was cancelled: {id, number, reason}."
+    }
   ],
   "ports": [
     {
       "name": "Numbers",
       "required": true,
       "description": "Declare the invoice's number format and take the next number, inside the posting's transaction.",
-      "adapters": { "numbering": { "file": "adapters/numbers_numbering.go", "expr": "fixinvoiceNumbers{numbering: numberingModule.Client()}" } }
+      "adapters": {
+        "numbering": {
+          "file": "adapters/numbers_numbering.go",
+          "expr": "fixinvoiceNumbers{numbering: numberingModule.Client()}"
+        }
+      }
     },
     {
       "name": "Periods",
       "required": true,
       "description": "Declare the sales area and refuse dates in a closed period.",
-      "adapters": { "period": { "file": "adapters/periods_period.go", "expr": "fixinvoicePeriods{period: periodModule.Client()}" } }
+      "adapters": {
+        "period": {
+          "file": "adapters/periods_period.go",
+          "expr": "fixinvoicePeriods{period: periodModule.Client()}"
+        }
+      }
+    },
+    {
+      "name": "Customers",
+      "required": false,
+      "description": "Check an invoice's customer and copy it when posting.",
+      "adapters": {
+        "customers": {
+          "file": "adapters/customers_customers.go",
+          "expr": "fixinvoiceCustomers{customers: customersModule.Client()}",
+          "requires": "0.1.0"
+        }
+      }
     }
   ],
   "register": {
     "go": {
       "import": "internal/modules/fixinvoice",
-      "build": ["fixinvoiceModule := fixinvoice.New(d, {{port:Numbers}}, {{port:Periods}})"],
-      "routes": ["fixinvoiceModule.Routes(mux)"]
+      "build": [
+        "fixinvoiceModule := fixinvoice.New(d, {{port:Numbers}}, {{port:Periods}}, {{port:Customers}})"
+      ],
+      "routes": [
+        "fixinvoiceModule.Routes(mux)"
+      ]
     }
   }
 }

@@ -1,0 +1,114 @@
+{
+  "id": "customers",
+  "version": "0.1.0",
+  "kind": "fullstack",
+  "title": "Customers",
+  "summary": "A company's customers: code (generated or typed), party type, tax identity as Coretax needs it (NPWP 16, NIK, passport, PKP, VAT collector), billing and shipping addresses with NITKU, contacts, payment days, credit limit, on hold with a reason — deactivated, never deleted. NIK and passport masked, whole only with an access record. Offers CustomerClient (Get, Search, Usable inside a posting's d.Tx, Snapshot for documents).",
+  "when_to_use": [
+    "The app sells to known parties: sales orders, invoices, receivables, deliveries, a POS with member customers."
+  ],
+  "when_not_to_use": [
+    "Suppliers — the suppliers module.",
+    "Receivable balances, credit-limit enforcement, tax invoices — the sales, accounting, and tax modules read from this one through their ports.",
+    "One customer list shared by several companies — this module keeps each company's own (decision K1 of its plan)."
+  ],
+  "stacks": [
+    "go"
+  ],
+  "requires_kernel": 6,
+  "provides": {
+    "contracts": [
+      "CustomerClient"
+    ],
+    "kernel": []
+  },
+  "ports": [],
+  "ui": [
+    "ui-core",
+    "ui-data",
+    "ui-forms",
+    "ui-feedback"
+  ],
+  "go_kits": [
+    "money",
+    "taxid"
+  ],
+  "permissions": [
+    {
+      "name": "customers.read",
+      "description": "Melihat pelanggan"
+    },
+    {
+      "name": "customers.manage",
+      "description": "Menambah, mengubah, menahan, dan menonaktifkan pelanggan"
+    },
+    {
+      "name": "customers.credit",
+      "description": "Mengubah termin pembayaran dan batas kredit pelanggan"
+    },
+    {
+      "name": "customers.sensitive",
+      "description": "Melihat NIK dan nomor paspor pelanggan secara utuh"
+    }
+  ],
+  "scoped": true,
+  "owns_tables": [
+    "cust_customers",
+    "cust_addresses",
+    "cust_contacts",
+    "cust_settings"
+  ],
+  "env": [],
+  "routes": {
+    "api": [
+      "GET /api/v1/customers",
+      "GET /api/v1/customers/lookup",
+      "POST /api/v1/customers",
+      "GET /api/v1/customers/settings",
+      "PUT /api/v1/customers/settings",
+      "GET /api/v1/customers/{id}",
+      "PUT /api/v1/customers/{id}",
+      "POST /api/v1/customers/{id}/deactivate",
+      "POST /api/v1/customers/{id}/activate",
+      "POST /api/v1/customers/{id}/hold",
+      "POST /api/v1/customers/{id}/release",
+      "GET /api/v1/customers/{id}/reveal",
+      "POST /api/v1/customers/{id}/addresses",
+      "PUT /api/v1/customers/{id}/addresses/{aid}",
+      "POST /api/v1/customers/{id}/addresses/{aid}/deactivate",
+      "POST /api/v1/customers/{id}/addresses/{aid}/activate",
+      "POST /api/v1/customers/{id}/contacts",
+      "PUT /api/v1/customers/{id}/contacts/{cid}",
+      "DELETE /api/v1/customers/{id}/contacts/{cid}"
+    ],
+    "web": [
+      "/customers",
+      "/customers/:id"
+    ]
+  },
+  "npm_dependencies": {},
+  "go_dependencies": {},
+  "install": {
+    "api": "apps/api/internal/modules/customers",
+    "web": "apps/web/src/modules/customers"
+  },
+  "register": {
+    "go": {
+      "import": "internal/modules/customers",
+      "build": [
+        "customersModule, err := customers.New(d)",
+        "if err != nil {",
+        "\treturn err",
+        "}"
+      ],
+      "routes": [
+        "customersModule.Routes(mux)"
+      ],
+      "after": []
+    },
+    "web": {
+      "import": "@/modules/customers/module",
+      "export": "customersModule"
+    }
+  }
+}

@@ -144,6 +144,57 @@
       "listens": []
     },
     {
+      "id": "customers",
+      "version": "0.1.0",
+      "kind": "fullstack",
+      "title": "Customers",
+      "summary": "A company's customers: code (generated or typed), party type, tax identity as Coretax needs it (NPWP 16, NIK, passport, PKP, VAT collector), billing and shipping addresses with NITKU, contacts, payment days, credit limit, on hold with a reason — deactivated, never deleted. NIK and passport masked, whole only with an access record. Offers CustomerClient (Get, Search, Usable inside a posting's d.Tx, Snapshot for documents).",
+      "when_to_use": [
+        "The app sells to known parties: sales orders, invoices, receivables, deliveries, a POS with member customers."
+      ],
+      "when_not_to_use": [
+        "Suppliers — the suppliers module.",
+        "Receivable balances, credit-limit enforcement, tax invoices — the sales, accounting, and tax modules read from this one through their ports.",
+        "One customer list shared by several companies — this module keeps each company's own (decision K1 of its plan)."
+      ],
+      "stacks": [
+        "go"
+      ],
+      "requires_kernel": 6,
+      "provides": {
+        "contracts": [
+          "CustomerClient"
+        ],
+        "kernel": []
+      },
+      "permissions": [
+        "customers.read",
+        "customers.manage",
+        "customers.credit",
+        "customers.sensitive"
+      ],
+      "ports": [],
+      "ui": [
+        "ui-core",
+        "ui-data",
+        "ui-forms",
+        "ui-feedback"
+      ],
+      "go_kits": [
+        "money",
+        "taxid"
+      ],
+      "owns_tables": [
+        "cust_customers",
+        "cust_addresses",
+        "cust_contacts",
+        "cust_settings"
+      ],
+      "scoped": true,
+      "emits": [],
+      "listens": []
+    },
+    {
       "id": "docstate",
       "version": "0.1.0",
       "kind": "gokit",
@@ -552,6 +603,83 @@
       "listens": []
     },
     {
+      "id": "suppliers",
+      "version": "0.1.0",
+      "kind": "fullstack",
+      "title": "Suppliers",
+      "summary": "A company's suppliers: code (generated or typed), party type, tax identity as Coretax needs it (NPWP 16, NIK, passport, PKP), addresses with NITKU, bank accounts (changed only with suppliers.sensitive, every change a security record, a warning when the holder is someone else), contacts, payment days, on hold with a reason — deactivated, never deleted. NIK, passport, and account numbers masked, whole only with an access record. Offers SupplierClient (Get, Search, Usable inside a posting's d.Tx, Snapshot, DefaultBankAccount).",
+      "when_to_use": [
+        "The app buys from known parties: purchase orders, bills, payables, payments, goods receipts."
+      ],
+      "when_not_to_use": [
+        "Customers — the customers module.",
+        "Payables, withholding (PPh 23/4(2)/21/26) and tax certificates (SKB, PP 55/PP 20/2026) — the purchasing, accounting, and tax modules read from this one through their ports.",
+        "One supplier list shared by several companies — this module keeps each company's own."
+      ],
+      "stacks": [
+        "go"
+      ],
+      "requires_kernel": 6,
+      "provides": {
+        "contracts": [
+          "SupplierClient"
+        ],
+        "kernel": []
+      },
+      "permissions": [
+        "suppliers.read",
+        "suppliers.manage",
+        "suppliers.sensitive"
+      ],
+      "ports": [],
+      "ui": [
+        "ui-core",
+        "ui-data",
+        "ui-forms",
+        "ui-feedback"
+      ],
+      "go_kits": [
+        "taxid"
+      ],
+      "owns_tables": [
+        "supp_suppliers",
+        "supp_addresses",
+        "supp_bank_accounts",
+        "supp_contacts",
+        "supp_settings"
+      ],
+      "scoped": true,
+      "emits": [],
+      "listens": []
+    },
+    {
+      "id": "taxid",
+      "version": "0.1.0",
+      "kind": "gokit",
+      "title": "Tax IDs (Go kit)",
+      "summary": "Indonesian tax identities: the 16-digit NPWP (old 15-digit ones normalized with a leading 0), the NIK as an individual's NPWP (length, region, birth date), the 22-digit NITKU of a place of business, passport numbers, an unofficial NPWP check digit as a warning, and masking for display. Formats only — registration is DJP's to confirm.",
+      "when_to_use": [
+        "A module stores or checks an NPWP, NIK, NITKU, or passport number — customers, suppliers, employees, the company profile."
+      ],
+      "when_not_to_use": [
+        "Confirming that a number is registered or that a party is a PKP — only Coretax/DJP can.",
+        "Tax calculations (PPN, PPh) — a tax module's."
+      ],
+      "stacks": [
+        "go"
+      ],
+      "requires_kernel": 6,
+      "provides": {},
+      "permissions": [],
+      "ports": [],
+      "ui": [],
+      "go_kits": [],
+      "owns_tables": [],
+      "scoped": false,
+      "emits": [],
+      "listens": []
+    },
+    {
       "id": "ui-core",
       "version": "0.4.0",
       "kind": "ui",
@@ -639,10 +767,10 @@
     },
     {
       "id": "ui-forms",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "kind": "ui",
       "title": "UI forms kit",
-      "summary": "Forms: FormField, PasswordInput, SearchSelect, AsyncSearchSelect (server search, paging), HierarchicalSelect (tree), Segmented, MultiToggle, DateRangeFields, KeyValueEditor, FieldHint, FormSection/FieldGrid/StickyFooter/ActionRow, LineItemsEditor, FileDropzone, Stepper.",
+      "summary": "Forms: FormField, PasswordInput, DigitsInput, AddressFields, SearchSelect, AsyncSearchSelect (server search, paging), HierarchicalSelect (tree), Segmented, MultiToggle, DateRangeFields, KeyValueEditor, FieldHint, FormSection/FieldGrid/StickyFooter/ActionRow, LineItemsEditor, FileDropzone, Stepper.",
       "when_to_use": [
         "Any screen where people enter or edit data."
       ],
@@ -668,7 +796,7 @@
     },
     {
       "id": "ui-gallery",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "kind": "web",
       "title": "UI gallery",
       "summary": "A development page (/ui-gallery) showing every component of the four UI kits in all its variants — to check a preset, compare designs, and pick components.",

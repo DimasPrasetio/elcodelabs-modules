@@ -29,7 +29,11 @@
 //   documents   money, docstate, numbering, period through a fixture invoice module: exact
 //               amounts, gapless numbers from two containers at once, a rollback giving its
 //               number back, closing and reopening the books, a lock moved mid-posting,
-//               revisions, company isolation; the exact-numbers rule
+//               revisions, company isolation; the exact-numbers rule; customers, suppliers, and
+//               taxid: generated codes, NPWP normalized, duplicate tax IDs confirmed, NIK and
+//               account numbers masked with audited reveal, credit and bank accounts guarded,
+//               a customer on hold or inactive refused by the fixture's posting through its
+//               port, companies kept apart
 // Each: install → npm install → go mod tidy → sqlc generate → gofmt → go vet → go test →
 // build:web → build:api → run the binary and call the API.
 //
@@ -1345,7 +1349,9 @@ async function documents() {
       ["audit-log", { ports: { UserDirectory: "users" } }],
       ["period"],
       ["numbering", { ports: { Units: "organization" } }],
-      ["fixinvoice", { ports: { Numbers: "numbering", Periods: "period" } }],
+      ["customers"],
+      ["suppliers"],
+      ["fixinvoice", { ports: { Numbers: "numbering", Periods: "period", Customers: "customers" } }],
     ]) installModule(lib, dir, id, opts);
     r = cli("upgrade", "users", "--port", "Placements=organization");
     expect("users' late Placements port wired to organization", r.status === 0, r.stdout + r.stderr);
@@ -1353,6 +1359,7 @@ async function documents() {
     expect("…and rbac's", r.status === 0, r.stdout + r.stderr);
     expect("the Go kits came along with the fixture that declares them",
       existsSync(join(dir, "apps/api/internal/shared/money/money.go")) && existsSync(join(dir, "apps/api/internal/shared/docstate/docstate.go")));
+    expect("taxid came along with customers and suppliers", existsSync(join(dir, "apps/api/internal/shared/taxid/taxid.go")));
     expect("money's decimal library is pinned in go.mod", readFileSync(join(dir, "apps/api/go.mod"), "utf8").includes("github.com/govalues/decimal v0.1.36"));
     if (!build(dir)) return;
     if (!DB_DSN) {
@@ -1544,6 +1551,94 @@ async function documents() {
       res = await admin.call("GET", "/api/v1/period/locks", undefined, at(String(b)));
       expect("B has none of company 1's locks", res.status === 200 && res.body.data.areas.every((a) => a.effective === null), res.body);
       expect("company 1's invoice is not found from B (404)", (await admin.call("GET", `${INV}/${first}`, undefined, at(String(b)))).status === 404);
+      // Customers and suppliers (taxid): masters per company, read by documents through a port.
+      const CU = "/api/v1/customers";
+      const SU = "/api/v1/suppliers";
+      const asInput = ({ id, tax_id_masked, on_hold, hold_reason, is_active, created_at, updated_at, ...rest }) => rest;
+      res = await admin.call("POST", CU, { name: "Toko Maju", legal_name: "PT Maju Jaya", party_type: "company", tax_id_kind: "npwp", tax_id: "01.302.442.7-092.000", is_pkp: true });
+      const maju = res.body?.data?.customer;
+      expect("a customer gets the first generated code; its 15-digit NPWP is stored as 16 digits",
+        res.status === 201 && maju.code === "PLG-00001" && maju.tax_id === "0013024427092000" && q(`SELECT tax_id FROM cust_customers WHERE id = ${maju.id}`) === "0013024427092000", res.body);
+      res = await admin.call("POST", CU, { name: "Toko Maju Cabang", party_type: "company", tax_id_kind: "npwp", tax_id: "0013024427092000" });
+      expect("the same NPWP again → 409 listing the other customer", res.status === 409 && res.body.errors?.[0]?.code === "PLG-00001", res.body);
+      res = await admin.call("POST", CU, { name: "Toko Maju Cabang", party_type: "company", tax_id_kind: "npwp", tax_id: "0013024427092000", confirm_duplicate: true });
+      expect("…saved when confirmed (one NPWP, places billed apart)", res.status === 201 && res.body.data.customer.code === "PLG-00002", res.body);
+      res = await admin.call("POST", CU, { name: "Budi", party_type: "individual", tax_id_kind: "nik", tax_id: "3201013208900001" });
+      expect("a NIK whose birth date is no date → 422 on tax_id", res.status === 422 && res.body.errors.some((e) => e.field === "tax_id"), res.body);
+      res = await admin.call("POST", CU, { name: "Budi", party_type: "individual", tax_id_kind: "nik", tax_id: "3201011508900001", payment_days: 30, credit_limit: "25000000" });
+      const budi = res.body?.data?.customer;
+      expect("an individual's NIK comes back masked, the credit limit exact",
+        res.status === 201 && budi.tax_id === "3201********0001" && budi.tax_id_masked && budi.credit_limit === "25000000.00", res.body);
+      res = await admin.call("GET", `${CU}?q=Budi`);
+      expect("…masked in the list too", res.status === 200 && res.body.data[0]?.tax_id === "3201********0001" && res.body.meta.total === 1, res.body);
+      const address = { city: "Bandung", province: "Jawa Barat", postal_code: "40111", country: "ID", for_billing: true, for_shipping: true, is_default_shipping: true };
+      res = await admin.call("POST", `${CU}/${maju.id}/addresses`, { ...address, label: "Pusat", line: "Jl. Asia Afrika 8", nitku: "0013024427092000000000", is_default_billing: true });
+      expect("an address with the customer's NITKU", res.status === 200, res.body);
+      res = await admin.call("POST", `${CU}/${maju.id}/addresses`, { ...address, label: "Lain", line: "Jl. X", nitku: "0099999999999999000001", is_default_billing: false });
+      expect("…another NPWP's NITKU → 422", res.status === 422 && res.body.errors.some((e) => e.field === "nitku"), res.body);
+
+      res = await admin.call("POST", "/api/v1/rbac/roles", { name: "Staf penjualan", description: "", permissions: ["customers.read", "customers.manage", "suppliers.read", "suppliers.manage", "fixinvoice.manage"] });
+      const clerkRole = res.body?.data?.id;
+      res = await admin.call("POST", "/api/v1/users", { name: "Staf", email: "staf@example.com", password: "staf-pass-1234" });
+      expect("a sales clerk, without credit or sensitive rights", res.status === 201 && (await admin.call("POST", `/api/v1/rbac/roles/${clerkRole}/members`, { user_id: res.body.data.id })).status === 201, res.body);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const clerk = await signIn(p1, "staf@example.com", "staf-pass-1234");
+      const budiShown = (await clerk.call("GET", `${CU}/${budi.id}`)).body?.data;
+      expect("the clerk's detail says no credit and no reveal", budiShown?.can?.credit === false && budiShown?.can?.sensitive === false, budiShown);
+      res = await clerk.call("PUT", `${CU}/${budi.id}`, { ...asInput(budiShown.customer), phone: "022 7654321" });
+      expect("the clerk changes Budi's phone sending the masked NIK back — the stored NIK stays",
+        res.status === 200 && q(`SELECT CONCAT(tax_id, '|', phone) FROM cust_customers WHERE id = ${budi.id}`) === "3201011508900001|022 7654321", res.body);
+      res = await clerk.call("PUT", `${CU}/${budi.id}`, { ...asInput(budiShown.customer), credit_limit: "99000000" });
+      expect("…but not the credit limit (403)", res.status === 403, res.body);
+      expect("…nor see the whole NIK (403)", (await clerk.call("GET", `${CU}/${budi.id}/reveal`)).status === 403);
+      res = await admin.call("GET", `${CU}/${budi.id}/reveal`);
+      expect("the administrator sees it whole, recorded as an access to personal data",
+        res.status === 200 && res.body.data.tax_id === "3201011508900001" &&
+        q(`SELECT COUNT(*) FROM audit_log WHERE module = 'customers' AND kind = 'access' AND target = 'customer:${budi.id}'`) === "1", res.body);
+
+      const forCustomer = async (customer, scope) => (await admin.call("POST", INV, { customer_id: customer, date: wib, discount: "0", lines: one }, at(scope))).body?.data;
+      let sale = await forCustomer(maju.id);
+      res = await post(admin, sale.id);
+      expect("an invoice for Toko Maju posts through the Customers port, copying its legal name and NPWP",
+        res.status === 200 && res.body.data.customer_name === "PT Maju Jaya" && res.body.data.customer_tax_id === "0013024427092000", res.body);
+      expect("the clerk puts Toko Maju on hold with a reason", (await clerk.call("POST", `${CU}/${maju.id}/hold`, { reason: "tunggakan 90 hari" })).status === 200);
+      sale = await forCustomer(maju.id);
+      res = await post(admin, sale.id);
+      expect("posting for a customer on hold → 409, no number taken", res.status === 409 && /ditahan/.test(res.body.message) &&
+        q(`SELECT COUNT(*) FROM fix_invoices WHERE id = ${sale.id} AND number IS NULL`) === "1", res.body);
+      expect("released", (await clerk.call("POST", `${CU}/${maju.id}/release`)).status === 200);
+      expect("deactivated", (await clerk.call("POST", `${CU}/${maju.id}/deactivate`)).status === 200);
+      res = await post(admin, sale.id);
+      expect("posting for an inactive customer → 409", res.status === 409 && /nonaktif/.test(res.body.message), res.body);
+      res = await admin.call("GET", `${CU}/${maju.id}`);
+      expect("…which still opens by ID (old documents render)", res.status === 200 && res.body.data.customer.is_active === false, res.body);
+      expect("…and is gone from pickers", (await admin.call("GET", `${CU}/lookup?q=Maju`)).body?.data?.every((c) => c.id !== maju.id));
+      expect("activated again", (await clerk.call("POST", `${CU}/${maju.id}/activate`)).status === 200);
+      expect("…and the invoice posts", (await post(admin, sale.id)).status === 200);
+
+      res = await admin.call("POST", SU, { name: "CV Sumber Rejeki", party_type: "company", tax_id_kind: "npwp", tax_id: "0013024427092000" });
+      const sup = res.body?.data?.supplier;
+      expect("a supplier gets PMS-00001 from its own counter; a customer's NPWP is no duplicate there", res.status === 201 && sup.code === "PMS-00001", res.body);
+      res = await clerk.call("POST", `${SU}/${sup.id}/bank-accounts`, { bank_name: "BCA", bank_code: "014", account_number: "1234567890", account_holder: "CV Sumber Rejeki", is_default: true });
+      expect("the clerk may not add a bank account (403)", res.status === 403, res.body);
+      res = await admin.call("POST", `${SU}/${sup.id}/bank-accounts`, { bank_name: "BCA", bank_code: "014", account_number: "123 456 7890", account_holder: "Budi Pribadi", is_default: true });
+      expect("an account held by someone else saves masked, with a warning", res.status === 200 && res.body.data.bank_account.account_number === "1234**7890" && res.body.data.warnings.length === 1, res.body);
+      expect("…a security record that does not hold the whole number",
+        q("SELECT COUNT(*) FROM audit_log WHERE module = 'suppliers' AND action = 'bank_account.saved' AND kind = 'security' AND data NOT LIKE '%1234567890%'") === "1" &&
+        q(`SELECT account_number FROM supp_bank_accounts WHERE supplier_id = ${sup.id}`) === "1234567890");
+      res = await clerk.call("GET", `${SU}/${sup.id}`);
+      expect("the clerk sees it masked", res.status === 200 && res.body.data.bank_accounts[0]?.account_number === "1234**7890", res.body);
+      res = await admin.call("GET", `${SU}/${sup.id}/reveal`);
+      expect("the administrator reveals it whole, recorded", res.status === 200 && res.body.data.bank_accounts[0]?.account_number === "1234567890" &&
+        q(`SELECT COUNT(*) FROM audit_log WHERE module = 'suppliers' AND kind = 'access'`) === "1", res.body);
+
+      expect("company 1's customer is not found from B (404)", (await admin.call("GET", `${CU}/${maju.id}`, undefined, at(String(b)))).status === 404);
+      expect("…nor its supplier", (await admin.call("GET", `${SU}/${sup.id}`, undefined, at(String(b)))).status === 404);
+      res = await admin.call("POST", CU, { name: "Toko Maju", party_type: "company", tax_id_kind: "npwp", tax_id: "0013024427092000" }, at(String(b)));
+      expect("B keeps its own customers: the NPWP is no duplicate there, its codes start at PLG-00001", res.status === 201 && res.body.data.customer.code === "PLG-00001", res.body);
+      const crossSale = await forCustomer(maju.id, String(b));
+      res = await post(admin, crossSale.id, String(b));
+      expect("an invoice in B for company 1's customer → 409 (not found in B)", res.status === 409 && /tidak ditemukan/.test(res.body.message), res.body);
       expect("no duplicate number anywhere", q("SELECT COUNT(*) - COUNT(DISTINCT company_id, number) FROM fix_invoices WHERE number IS NOT NULL") === "0");
       expect("no panic in either container", !/panic/i.test(api.output() + api2.output()));
     } finally {

@@ -8,3 +8,8 @@ what exists before writing a new component.
 
 Not for production: remove it (`detach` and delete the folder and its registry line) before a
 release.
+
+## Changes
+
+- **0.1.1** — shows `DigitsInput` and `AddressFields` (ui-forms 0.2.0).
+- **0.1.0** — first version.

@@ -29,7 +29,7 @@ func nullID(id int64) sql.NullInt64   { return sql.NullInt64{Int64: id, Valid: i
 
 func (r *Repository) Create(ctx context.Context, inv application.Invoice, at time.Time) (int64, error) {
 	id, err := r.q(ctx).CreateInvoice(ctx, sqlc.CreateInvoiceParams{
-		CompanyID: company(ctx), BranchID: inv.BranchID, DocDate: inv.Date.Start(time.UTC), Number: nullStr(inv.Number),
+		CompanyID: company(ctx), BranchID: inv.BranchID, CustomerID: inv.CustomerID, DocDate: inv.Date.Start(time.UTC), Number: nullStr(inv.Number),
 		Discount: inv.Discount.String(), Total: inv.Total.String(), AmendedFrom: nullID(inv.AmendedFrom), Revision: int32(inv.Revision), CreatedAt: at,
 	})
 	var me *mysql.MySQLError
@@ -67,7 +67,7 @@ func (r *Repository) Get(ctx context.Context, id int64, forUpdate bool) (applica
 	if err != nil {
 		return application.Invoice{}, err
 	}
-	inv := application.Invoice{ID: row.ID, BranchID: row.BranchID, Date: kernel.DateOf(row.DocDate, time.UTC), Number: row.Number.String,
+	inv := application.Invoice{ID: row.ID, BranchID: row.BranchID, CustomerID: row.CustomerID, CustomerName: row.CustomerName, CustomerTaxID: row.CustomerTaxID, Date: kernel.DateOf(row.DocDate, time.UTC), Number: row.Number.String,
 		Fields: docstate.Fields{Status: docstate.Status(row.Status), PostedAt: row.PostedAt.Time, PostedBy: row.PostedBy.Int64, CancelledAt: row.CancelledAt.Time,
 			CancelledBy: row.CancelledBy.Int64, CancelReason: row.CancelReason.String, AmendedFrom: row.AmendedFrom.Int64, Revision: int(row.Revision)}}
 	if inv.Discount, err = money.ParseAmount(row.Discount); err != nil {
@@ -113,6 +113,10 @@ func (r *Repository) UpdateDraft(ctx context.Context, inv application.Invoice) (
 
 func (r *Repository) MarkPosted(ctx context.Context, id int64, number string, at time.Time, by int64) (int64, error) {
 	return r.q(ctx).MarkPosted(ctx, sqlc.MarkPostedParams{Number: nullStr(number), PostedAt: sql.NullTime{Time: at, Valid: true}, PostedBy: nullID(by), ID: id, CompanyID: company(ctx)})
+}
+
+func (r *Repository) SetCustomerSnapshot(ctx context.Context, id int64, name, taxID string) error {
+	return r.q(ctx).SetCustomerSnapshot(ctx, sqlc.SetCustomerSnapshotParams{CustomerName: name, CustomerTaxID: taxID, ID: id, CompanyID: company(ctx)})
 }
 
 func (r *Repository) MarkCancelled(ctx context.Context, id int64, reason string, at time.Time, by int64) (int64, error) {

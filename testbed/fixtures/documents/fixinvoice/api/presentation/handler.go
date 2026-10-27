@@ -51,21 +51,24 @@ type lineDTO struct {
 }
 
 type invoiceDTO struct {
-	ID           int64        `json:"id"`
-	BranchID     int64        `json:"branch_id"`
-	Date         string       `json:"date"`
-	Number       string       `json:"number"`
-	Status       string       `json:"status"`
-	Discount     money.Amount `json:"discount"`
-	Total        money.Amount `json:"total"`
-	AmendedFrom  int64        `json:"amended_from"`
-	Revision     int          `json:"revision"`
-	CancelReason string       `json:"cancel_reason"`
-	Lines        []lineDTO    `json:"lines"`
+	ID            int64        `json:"id"`
+	BranchID      int64        `json:"branch_id"`
+	CustomerID    int64        `json:"customer_id"`
+	CustomerName  string       `json:"customer_name"`
+	CustomerTaxID string       `json:"customer_tax_id"`
+	Date          string       `json:"date"`
+	Number        string       `json:"number"`
+	Status        string       `json:"status"`
+	Discount      money.Amount `json:"discount"`
+	Total         money.Amount `json:"total"`
+	AmendedFrom   int64        `json:"amended_from"`
+	Revision      int          `json:"revision"`
+	CancelReason  string       `json:"cancel_reason"`
+	Lines         []lineDTO    `json:"lines"`
 }
 
 func toDTO(inv application.Invoice) invoiceDTO {
-	d := invoiceDTO{ID: inv.ID, BranchID: inv.BranchID, Date: inv.Date.String(), Number: inv.Number, Status: string(inv.Status), Discount: inv.Discount, Total: inv.Total,
+	d := invoiceDTO{ID: inv.ID, BranchID: inv.BranchID, CustomerID: inv.CustomerID, CustomerName: inv.CustomerName, CustomerTaxID: inv.CustomerTaxID, Date: inv.Date.String(), Number: inv.Number, Status: string(inv.Status), Discount: inv.Discount, Total: inv.Total,
 		AmendedFrom: inv.AmendedFrom, Revision: inv.Revision, CancelReason: inv.CancelReason, Lines: []lineDTO{}}
 	for _, l := range inv.Lines {
 		d.Lines = append(d.Lines, lineDTO(l))
@@ -74,9 +77,10 @@ func toDTO(inv application.Invoice) invoiceDTO {
 }
 
 type invoiceRequest struct {
-	Date     string       `json:"date"`
-	Discount money.Amount `json:"discount"`
-	Lines    []struct {
+	CustomerID int64        `json:"customer_id"`
+	Date       string       `json:"date"`
+	Discount   money.Amount `json:"discount"`
+	Lines      []struct {
 		SKU   string       `json:"sku"`
 		Qty   money.Qty    `json:"qty"`
 		Price money.Amount `json:"price"`
@@ -88,7 +92,7 @@ func (in invoiceRequest) invoice() (application.Invoice, error) {
 	if err != nil || len(in.Lines) == 0 {
 		return application.Invoice{}, apperror.Validation([]validator.FieldError{{Field: "date", Message: "tanggal dan baris wajib"}})
 	}
-	inv := application.Invoice{Date: kernel.DateOf(t, time.UTC), Discount: in.Discount}
+	inv := application.Invoice{CustomerID: in.CustomerID, Date: kernel.DateOf(t, time.UTC), Discount: in.Discount}
 	for _, l := range in.Lines {
 		inv.Lines = append(inv.Lines, application.Line{SKU: l.SKU, Qty: l.Qty, Price: l.Price})
 	}
@@ -98,7 +102,10 @@ func (in invoiceRequest) invoice() (application.Invoice, error) {
 // fail maps the fixture's and the kits' errors to responses.
 func fail(w http.ResponseWriter, r *http.Request, err error) {
 	var closed *ports.PeriodClosedError
+	var refused *ports.CustomerRefusedError
 	switch {
+	case errors.As(err, &refused):
+		err = apperror.Conflict(refused.Message)
 	case errors.Is(err, application.ErrNotFound):
 		err = apperror.NotFound("Faktur tidak ditemukan")
 	case errors.Is(err, application.ErrInsufficient):

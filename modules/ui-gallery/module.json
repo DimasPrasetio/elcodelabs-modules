@@ -1,6 +1,6 @@
 {
   "id": "ui-gallery",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "kind": "web",
   "title": "UI gallery",
   "summary": "A development page (/ui-gallery) showing every component of the four UI kits in all its variants — to check a preset, compare designs, and pick components.",

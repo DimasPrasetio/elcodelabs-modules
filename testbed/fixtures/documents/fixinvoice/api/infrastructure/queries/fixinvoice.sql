@@ -1,6 +1,6 @@
 -- name: CreateInvoice :execlastid
-INSERT INTO fix_invoices (company_id, branch_id, doc_date, number, discount, total, amended_from, revision, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO fix_invoices (company_id, branch_id, customer_id, doc_date, number, discount, total, amended_from, revision, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: AddLine :exec
 INSERT INTO fix_invoice_lines (company_id, invoice_id, sku, qty, price, amount, discount_share) VALUES (?, ?, ?, ?, ?, ?, ?);
@@ -23,6 +23,9 @@ UPDATE fix_invoices SET doc_date = ?, discount = ?, total = ? WHERE id = ? AND c
 -- name: MarkPosted :execrows
 UPDATE fix_invoices SET status = 'posted', number = ?, posted_at = ?, posted_by = ?
 WHERE id = ? AND company_id = ? AND status = 'draft';
+
+-- name: SetCustomerSnapshot :exec
+UPDATE fix_invoices SET customer_name = ?, customer_tax_id = ? WHERE id = ? AND company_id = ?;
 
 -- name: MarkCancelled :execrows
 UPDATE fix_invoices SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?, cancel_reason = ?

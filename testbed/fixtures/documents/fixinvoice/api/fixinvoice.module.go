@@ -13,9 +13,10 @@ import (
 
 type Module struct{ handler *presentation.Handler }
 
-func New(d *kernel.Deps, numbers ports.Numbers, periods ports.Periods) *Module {
+// New builds the fixture; customers is optional (nil: invoices have no customer).
+func New(d *kernel.Deps, numbers ports.Numbers, periods ports.Periods, customers ports.Customers) *Module {
 	d.Authz.Declare(kernel.Permission{Name: presentation.PermManage, Module: "fixinvoice", Description: "Fixture: mengelola faktur"})
-	svc := application.NewService(infrastructure.NewRepository(d.Tx), numbers, periods, d)
+	svc := application.NewService(infrastructure.NewRepository(d.Tx), numbers, periods, customers, d)
 	return &Module{handler: presentation.NewHandler(svc, d.Authz)}
 }
 
