@@ -159,7 +159,7 @@ function resolvePorts(m, ports, lock) {
   const expr = {};
   for (const port of m.ports ?? []) {
     const choice = ports?.[port.name];
-    if (choice === undefined) {
+    if (choice === undefined || choice === null) {
       if (port.required) {
         const ready = Object.keys(port.adapters ?? {});
         throw new Error(`${m.id} needs port ${port.name} (${port.description})\n  wire it with --port ${port.name}=<provider>${ready.length ? ` (ready-made: ${ready.join(", ")})` : ""}, or --port ${port.name}=expr:<Go expression> for an adapter the project writes`);
@@ -180,6 +180,51 @@ function resolvePorts(m, ports, lock) {
     }
   }
   return expr;
+}
+
+/**
+ * The module's late lines (register.go.late): each wires an optional port once every module is
+ * built — how a module hands its port to a provider built after it (organization after users,
+ * which needs users). Written just before the end marker, so they follow every module's block;
+ * a line whose port is not wired is left out.
+ */
+function goLateLines(m, portExpr) {
+  return (m.register?.go?.late ?? [])
+    .filter((line) => [...line.matchAll(/\{\{port:(\w+)\}\}/g)].every(([, name]) => portExpr[name]))
+    .map((line) => line.replace(/\{\{port:(\w+)\}\}/g, (_, name) => portExpr[name]));
+}
+
+/**
+ * Moves every installed module's late lines (except skip's) back to just before the end marker,
+ * in install order — after a block was added at the end, so late lines keep following every
+ * block. A late line the project edited is left where it is.
+ */
+function lateLinesLast(reg, lock, skip, notes) {
+  for (const [id, e] of Object.entries(lock.modules)) {
+    const late = e.register?.late ?? [];
+    if (id === skip || !late.length) continue;
+    if (replaceLines(reg, late, [])) insertBefore(reg, "// elco:modules:end", late.map((l) => `\t${l}\n`).join(""));
+    else notes.push(`registry.go: ${id}'s late lines were edited here and stay where they are — keep them after every module's block`);
+  }
+}
+
+/**
+ * Notes for an install of provider id: installed modules with an optional port that has a
+ * ready-made adapter for id and is not wired yet — what to run to wire it.
+ */
+function portsAwaiting(src, lock, id) {
+  const notes = [];
+  for (const [other, e] of Object.entries(lock.modules)) {
+    if (other === id || e.status === "detached") continue;
+    let m;
+    try { m = manifestFrom(src, other); } catch { continue; }
+    for (const port of m.ports ?? []) {
+      if (!port.required && port.adapters?.[id] && !e.ports?.[port.name]) {
+        notes.push(`${other}'s optional port ${port.name} can now use ${id}: module.mjs upgrade ${other} --port ${port.name}=${id}`);
+      }
+    }
+  }
+  return notes;
 }
 
 /** The module's registry lines, each {{port:Name}} replaced by its wiring — nil for an optional
@@ -385,6 +430,7 @@ export function installModule(libRoot, project, id, options = {}) {
   }
   const portExpr = resolvePorts(m, options.ports, lock);
   const goLines = goRegisterLines(m, portExpr);
+  const lateLines = goLateLines(m, portExpr);
   const goModule = goModulePath(project);
 
   const files = renderFiles(src, m, goModule, options.ports);
@@ -401,6 +447,7 @@ export function installModule(libRoot, project, id, options = {}) {
     throw new Error(`${id}: ${path} already exists in the project${owner ? ` and ${owner[0]}'s copy was changed here` : ""} — refusing to overwrite`);
   }
 
+  const lateNotes = [];
   // Nothing above wrote anything: a refused install leaves the project as it was.
   for (const p of m.replaces ?? []) rmSync(join(project, p), { recursive: true, force: true });
   const hashes = {};
@@ -414,6 +461,8 @@ export function installModule(libRoot, project, id, options = {}) {
     const reg = join(project, "apps/api/internal/modules/registry.go");
     insertSorted(reg, "// elco:imports:begin", "// elco:imports:end", `\t"${goModule}/${m.register.go.import}"`);
     insertBefore(reg, "// elco:modules:end", goLines.map((l) => `\t${l}\n`).join(""));
+    lateLinesLast(reg, lock, id, lateNotes);
+    if (lateLines.length) insertBefore(reg, "// elco:modules:end", lateLines.map((l) => `\t${l}\n`).join(""));
     if (src.exists(`modules/${id}/api/infrastructure/queries`)) addSqlcBlock(project, id);
   }
   if (m.register?.web) {
@@ -426,7 +475,7 @@ export function installModule(libRoot, project, id, options = {}) {
       insertBefore(reg, "// elco:modules:end", `  ${name},\n`);
     }
   }
-  const notes = [];
+  const notes = [...portsAwaiting(src, lock, id), ...lateNotes];
   const npm = addNpmDeps(project, m.npm_dependencies, notes);
   const go = addGoDeps(project, m.go_dependencies, notes);
   const env = addEnv(project, id, m.env);
@@ -439,10 +488,10 @@ export function installModule(libRoot, project, id, options = {}) {
     commit: state.commit,
     dirty: state.dirty,
     status: "managed",
-    ports: options.ports ?? {},
+    ports: Object.fromEntries(Object.entries(options.ports ?? {}).filter(([, v]) => v !== null)),
     files: hashes,
     migrations,
-    register: { go: goLines, goImport: m.register?.go?.import ?? null, web: m.register?.web ?? null },
+    register: { go: goLines, late: lateLines, goImport: m.register?.go?.import ?? null, web: m.register?.web ?? null },
   };
   writeLock(project, lock);
 
@@ -641,7 +690,8 @@ export function upgrade(libRoot, project, id, options = {}) {
   for (const kit of kitsOf(mNew)) {
     if (!lock.modules[kit]) throw new Error(`${id} ${mNew.version} builds on the kit "${kit}" — add it first (module.mjs upgrade does)`);
   }
-  const ports = { ...entry.ports, ...(options.ports ?? {}) };
+  // --port P=none (null) unwires an optional port.
+  const ports = Object.fromEntries(Object.entries({ ...entry.ports, ...(options.ports ?? {}) }).filter(([, v]) => v !== null));
   const portExpr = resolvePorts(mNew, ports, lock);
   const notes = [];
 
@@ -676,12 +726,28 @@ export function upgrade(libRoot, project, id, options = {}) {
   // wired to this one (then its place is kept, and the order is the project's to fix).
   const rewired = JSON.stringify(entry.ports ?? {}) !== JSON.stringify(ports);
   const consumers = Object.entries(lock.modules).filter(([other, e]) => other !== id && Object.values(e.ports ?? {}).includes(id));
+  let movedToEnd = false;
   if (JSON.stringify(goLines) !== JSON.stringify(oldGo)) {
-    if (oldGo.length === 0) insertBefore(reg, "// elco:modules:end", goLines.map((l) => `\t${l}\n`).join(""));
-    else if (rewired && consumers.length === 0 && replaceLines(reg, oldGo, [])) {
+    if (oldGo.length === 0) {
       insertBefore(reg, "// elco:modules:end", goLines.map((l) => `\t${l}\n`).join(""));
+      movedToEnd = true;
+    } else if (rewired && consumers.length === 0 && replaceLines(reg, oldGo, [])) {
+      insertBefore(reg, "// elco:modules:end", goLines.map((l) => `\t${l}\n`).join(""));
+      movedToEnd = true;
     } else if (!replaceLines(reg, oldGo, goLines)) {
       notes.push(`registry.go: ${id}'s lines changed in the library but were edited here — set them by hand to:\n${goLines.map((l) => `\t${l}`).join("\n") || "\t(none: remove them)"}`);
+    }
+  }
+  // A block now at the end: every late line goes back after it.
+  if (movedToEnd) lateLinesLast(reg, lock, id, notes);
+  // This module's late lines: taken out and written last — after every block, its own too.
+  const oldLate = entry.register?.late ?? [];
+  const lateLines = goLateLines(mNew, portExpr);
+  if (JSON.stringify(lateLines) !== JSON.stringify(oldLate) || movedToEnd) {
+    if (oldLate.length && !replaceLines(reg, oldLate, [])) {
+      notes.push(`registry.go: ${id}'s late lines were edited here — set them by hand to:\n${lateLines.map((l) => `\t${l}`).join("\n") || "\t(none: remove them)"}`);
+    } else if (lateLines.length) {
+      insertBefore(reg, "// elco:modules:end", lateLines.map((l) => `\t${l}\n`).join(""));
     }
   }
   if (mNew.register?.go && theirsSrc.exists(`modules/${id}/api/infrastructure/queries`)) addSqlcBlock(project, id);
@@ -710,7 +776,7 @@ export function upgrade(libRoot, project, id, options = {}) {
     ports,
     files: Object.fromEntries([...renderFiles(theirsSrc, mNew, goModule, ports)].map(([p, c]) => [p, sha(c)])),
     migrations,
-    register: { go: goLines, goImport: mNew.register?.go?.import ?? null, web: mNew.register?.web ?? null },
+    register: { go: goLines, late: lateLines, goImport: mNew.register?.go?.import ?? null, web: mNew.register?.web ?? null },
   };
   writeLock(project, lock);
   return { id, from: entry.version, to: mNew.version, ...report, migrationsAdded: [...fresh.keys()], npm, go, env, notes };
@@ -739,6 +805,17 @@ export function removeModule(libRoot, project, id) {
     if (kitsOf(m).includes(id)) dependents.push(`${other} (builds on the kit ${id})`);
   }
   if (dependents.length) throw new Error(`${id} cannot be removed — ${dependents.join(", ")} needs it; remove or rewire those first`);
+  // A line the project wrote or edited (an expr: adapter, an edited late line) may still use the
+  // module: removing it would leave a registry that does not compile.
+  const reg0 = join(project, "apps/api/internal/modules/registry.go");
+  const varName = (entry.register?.go ?? [])[0]?.match(/^(\w+)\s*(?:,|:=)/)?.[1];
+  if (varName && existsSync(reg0)) {
+    let rest = read(reg0);
+    for (const l of [...(entry.register?.go ?? []), ...(entry.register?.late ?? [])]) rest = rest.replace(`\t${l}\n`, "");
+    if (new RegExp(`\\b${varName}\\b`).test(rest)) {
+      throw new Error(`${id} cannot be removed — registry.go still uses ${varName} outside ${id}'s own lines (edited or project-written); take those out first`);
+    }
+  }
 
   const kept = [];
   const dirs = new Set();
@@ -760,6 +837,9 @@ export function removeModule(libRoot, project, id) {
   if (entry.register?.goImport && existsSync(reg)) removeLine(reg, `\t"${goModule}/${entry.register.goImport}"\n`);
   if ((entry.register?.go ?? []).length && existsSync(reg)) {
     if (!replaceLines(reg, entry.register.go, [])) kept.push("registry.go lines (edited here — remove them by hand)");
+  }
+  if ((entry.register?.late ?? []).length && existsSync(reg)) {
+    if (!replaceLines(reg, entry.register.late, [])) kept.push("registry.go late lines (edited here — remove them by hand)");
   }
   if (entry.register?.web) {
     const webReg = join(project, "apps/web/src/app/modules.ts");

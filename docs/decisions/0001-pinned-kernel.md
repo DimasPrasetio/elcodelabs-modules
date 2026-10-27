@@ -17,7 +17,8 @@ kernel must stay out of a module developer's reach: they change only in the skil
    `kernel/kernel.lock.json`. Only `scripts/kernel-sync.mjs` writes `kernel/`.
 2. **Guards.** `npm run check` (pre-commit and CI) refuses an edit under `kernel/`
    (`pinned-kernel`), a module whose `requires_kernel` is above the pinned kernel
-   (`kernel-pinned`), and a commit that mixes `kernel/` with anything else (`kernel-alone`).
+   (`kernel-pinned`), and a commit that mixes `kernel/` with anything but the catalog it
+   regenerates (`kernel-alone`).
    `.github/CODEOWNERS` puts `kernel/`, `scripts/`, CI, and the contract documents under the
    maintainer's review (effective with branch protection "Require review from Code Owners").
 3. **Self-serve tools.** The testbed copies the pinned host (`--skill` remains for trying an

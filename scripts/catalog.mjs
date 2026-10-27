@@ -85,6 +85,19 @@ for (const { id, m } of modules) {
       if (!(m.ports ?? []).some((p) => p.name === name)) problem(at, `register uses undeclared port ${name}`);
     }
   }
+  // A late line wires an optional port after every module is built: never one New needs.
+  const goLines = [...(m.register?.go?.build ?? []), ...(m.register?.go?.routes ?? []), ...(m.register?.go?.after ?? [])];
+  const early = new Set(goLines.flatMap((l) => [...l.matchAll(/\{\{port:(\w+)\}\}/g)].map((x) => x[1])));
+  for (const line of m.register?.go?.late ?? []) {
+    const names = [...line.matchAll(/\{\{port:(\w+)\}\}/g)].map((x) => x[1]);
+    if (!names.length) problem(at, `register.go.late line "${line}" wires no port — put it in "after"`);
+    for (const name of names) {
+      const port = (m.ports ?? []).find((p) => p.name === name);
+      if (!port) problem(at, `register.go.late uses undeclared port ${name}`);
+      else if (port.required) problem(at, `register.go.late wires the required port ${name} — New needs it, so it goes in "build"`);
+      if (early.has(name)) problem(at, `port ${name} is wired both in the module's block and in "late"`);
+    }
+  }
 }
 
 // The architecture rules (layout, layers, imports, kits, colors, HTTP, tables) — and, with

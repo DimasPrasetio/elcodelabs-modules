@@ -37,7 +37,7 @@ message. The pre-commit hook and CI run it with `--since`, which adds the histor
 | `no-module-imports` | A module never imports another module — not its internals, not its `contracts/`, in Go or in the web (`@/modules/<other>`, or a relative path out of its folder). What it needs is a port in its own `ports/`; what it offers is its `contracts/`. | ✓ |
 | `adapters-declared` | An adapter (`adapters/*.go`, package `modules`) joins this module's `ports` to one provider's `contracts` and is declared under that port in `module.json`. Mapping only, no logic. | ✓ |
 | `kernel-only` | Go code builds on the kernel (`internal/kernel`), `internal/config`, and `internal/shared/*` — nothing else of the project. | ✓ |
-| `go-module-contract` | `api/<id>.module.go` holds `New(d, ports...) (*Module, error)`, `Routes(mux)`, and `Client()` when it offers a contract. | ✓ (file) · testbed (shape) |
+| `go-module-contract` | `api/<id>.module.go` holds `New(d, ports...) (*Module, error)`, `Routes(mux)`, and `Client()` when it offers a contract — and `Use<Port>(…)` for each late port (`register.go.late`). | ✓ (file) · testbed (shape) |
 | `go-layers` | `api/` holds only `contracts/ ports/ application/ domain/ infrastructure/ presentation/`. Domain, contracts, and ports import nothing of the module; application never imports infrastructure or presentation; presentation reaches storage only through application; only infrastructure touches `database/sql`. | ✓ |
 | `sqlc-not-orm` | Data access is `database/sql` + sqlc (`infrastructure/queries`). No ORM. | ✓ |
 | `declared-go-deps` | Every third-party Go import is in `go_dependencies` (module path → the version it was tested with), except the kernel's own (`go-sql-driver/mysql`, `joho/godotenv`). The installer pins them in the project's `go.mod`. | ✓ |
@@ -61,7 +61,7 @@ message. The pre-commit hook and CI run it with `--since`, which adds the histor
 | `release-tags` | Every released version has the tag `<id>/v<version>` (the post-commit hook creates it; push with `git push --follow-tags`). A project whose recorded commit is gone upgrades from the tag. | ✓ CI on push |
 | `pinned-kernel` | `kernel/` is exactly what `kernel/kernel.lock.json` records — no file edited, added, or removed. It changes only through `scripts/kernel-sync.mjs`. | ✓ |
 | `kernel-pinned` | A module's `requires_kernel` is at most the pinned kernel: a module builds only on a kernel it can be tested against. | ✓ |
-| `kernel-alone` | A commit that changes `kernel/` changes nothing else, so a kernel update is reviewed and reverted on its own. | ✓ `--since` |
+| `kernel-alone` | A commit that changes `kernel/` changes nothing else but the catalog it regenerates (`CATALOG.md`, `catalog.json` name the pinned kernel), so a kernel update is reviewed and reverted on its own. | ✓ `--since` |
 | `adapter-requires` | An adapter's `requires` (oldest provider version it compiles against) is a released version of that provider. | ✓ |
 | `declared-go-kits` | A module (or kit) that imports a Go kit (`internal/shared/<kit>`) lists it in `go_kits`. | ✓ |
 | `gokit-pure` | A Go kit imports only the standard library, its `go_dependencies`, and other Go kits — no kernel, config, module, or environment; no tables, no wiring; never named like a kernel `shared/` package. | ✓ |
@@ -108,7 +108,8 @@ a change to them needs the maintainer's review.
    ships what the current kernel allows.
 4. The skill's maintainer decides, releases the kernel in monorepo-elcodelabs (after running this
    testbed against it), and brings it here with `npm run kernel:sync -- --skill <path>`: one
-   commit that touches only `kernel/`. Modules may then raise `requires_kernel`.
+   commit that touches only `kernel/` and the regenerated catalog. Modules may then raise
+   `requires_kernel`.
 
 A kernel version only adds: modules released for kernel N keep compiling and behaving the same
 on N+1. Something is removed only after a kernel that marks it deprecated, in a kernel the skill

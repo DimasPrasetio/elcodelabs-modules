@@ -7,7 +7,8 @@
 //   list                         modules and presets in the library (✓ = installed here)
 //   info <id>                    a module's README and manifest summary
 //   add <id>... [--port P=V]     install modules in order; V = provider module id, or
-//                                expr:<Go expression> for an adapter the project writes
+//                                expr:<Go expression> for an adapter the project writes;
+//                                with upgrade, V = none unwires an optional port
 //   preset <id>                  apply a theme preset
 //   status                       installed vs library version, files the project changed
 //   upgrade <id>|preset|--all    3-way merge to the library's version (conflicts marked)
@@ -44,8 +45,8 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === "--migration") opts.migrations.push(value());
   else if (a === "--port") {
     const [name, v] = value().split(/=(.*)/s);
-    if (!name || !v) die("--port takes <Port>=<provider> or <Port>=expr:<Go expression>");
-    opts.ports[name] = v.startsWith("expr:") ? { expr: v.slice(5) } : v;
+    if (!name || !v) die("--port takes <Port>=<provider>, <Port>=expr:<Go expression>, or <Port>=none");
+    opts.ports[name] = v === "none" ? null : v.startsWith("expr:") ? { expr: v.slice(5) } : v;
   } else if (a === "-h" || a === "--help") opts.help = true;
   else if (a.startsWith("--")) die(`unknown option ${a}`);
   else opts.positional.push(a);
@@ -182,7 +183,10 @@ try {
             for (const t of k.tookOver ?? []) out(`  took over ${t}`);
           }
         }
-        const r = upgrade(LIB, PROJECT, id, { ports: opts.ports });
+        // With --all, each module gets only the ports it declares.
+        const declared = id === "preset" ? [] : (loadManifest(LIB, id).ports ?? []).map((p) => p.name);
+        const ports = Object.fromEntries(Object.entries(opts.ports).filter(([name]) => declared.includes(name)));
+        const r = upgrade(LIB, PROJECT, id, { ports });
         printUpgrade(r);
         conflicts += r.conflicts.length;
       }

@@ -4,8 +4,8 @@
 // writes it to kernel/host — with the kernel references (kernel/reference), a README, and
 // kernel/kernel.lock.json. For whoever maintains the skill; module
 // developers never run it. Commit the result by itself, with the catalog it regenerates (the
-// catalog check refuses a commit that mixes kernel/ with anything else), after the testbed
-// passes on it.
+// catalog check refuses a commit that mixes kernel/ with anything but that catalog), after the
+// testbed passes on it.
 //
 // Usage: node scripts/kernel-sync.mjs --skill <monorepo-elcodelabs folder in a git clone> [--ref <tag|commit>]
 //   --ref defaults to the newest <folder>/kernel/v<N>.<R> release tag in that clone.

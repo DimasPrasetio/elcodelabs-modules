@@ -85,7 +85,8 @@ architecture; the kernel contract a module builds on is pinned, read-only, in
       "import": "internal/modules/auth",
       "build": ["authModule := auth.New(d, {{port:UserStore}})"],
       "routes": ["authModule.Routes(mux)"],
-      "after": ["d.Auth.Provide(authModule.Authenticator())"]   // e.g. filling a kernel slot
+      "after": ["d.Auth.Provide(authModule.Authenticator())"],  // e.g. filling a kernel slot
+      "late": []   // optional ports wired once every module is built (see Placeholders)
     },
     "web": { "import": "@/modules/auth/module", "export": "authModule" }
   }
@@ -134,6 +135,17 @@ the kernel's `internal/shared` already has (see `kernel/host/apps/api/internal/s
   `nil` for an optional port (`"required": false`) left unwired, which the module's `New` treats
   as "this feature is off". A port is optional whenever the module still makes sense without it;
   adding a required port to a released module breaks every project that has not wired it.
+- `{{port:<Name>}}` in `register.go.late` wires an optional port **after every module is built**
+  — for a provider that is built after this module, often because it needs this module itself
+  (`organization` needs `users`; `users` hands its optional `Placements` port to
+  `organization`). The line calls a setter, e.g. `usersModule.UsePlacements({{port:Placements}})`;
+  it is written just before the registry's end marker, and left out while the port is unwired.
+  A late port is never one `New` needs (it is nil there), and never also in the module's block.
+  Wiring it later — `module.mjs upgrade users --port Placements=organization` — adds the line;
+  nothing in the module's block moves. Installing a provider notes the optional ports of
+  installed modules that have an adapter for it. `--port Placements=none` unwires an optional
+  port (needed before its provider can be removed). Whenever a module's block is added at the
+  end of the registry, every late line moves back after it.
 
 ### Migrations
 
