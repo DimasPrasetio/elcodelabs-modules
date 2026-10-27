@@ -63,7 +63,7 @@ export function kernelTree(root) {
 export function checkKernel(root, modules, problem) {
   const lock = readKernelLock(root);
   if (!lock) {
-    problem("kernel", `pinned-kernel: ${LOCK_FILE} is missing — run node scripts/kernel-sync.mjs --skill <monorepo-elcodelabs>`);
+    problem("kernel", `pinned-kernel: ${LOCK_FILE} is missing — restore it with git checkout -- kernel (only the maintainer pins a new kernel, with scripts/kernel-sync.mjs)`);
     return;
   }
   const host = join(root, HOST_DIR);
@@ -109,7 +109,7 @@ function changedPaths(root, commit) {
 
 // Generated from kernel/ and modules/: the catalog names the pinned kernel, so a kernel sync
 // regenerates it and it travels with the sync.
-const SYNC_GENERATED = new Set(["CATALOG.md", "catalog.json"]);
+const SYNC_GENERATED = new Set(["CATALOG.md", "catalog.json", "STATUS.md"]); // and STATUS.md's log line
 
 /**
  * A kernel change travels alone: every commit after ref (and the uncommitted work) that touches

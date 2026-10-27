@@ -15,6 +15,13 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const git = (...args) => spawnSync("git", args, { cwd: ROOT, encoding: "utf8" });
 const CHECK = process.argv.includes("--check");
 
+// A version is released when it reaches main: work branches are not tagged (their versions may
+// still change before the pull request is merged).
+const branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.trim();
+if (!CHECK && branch !== "main") {
+  console.log(`tags: on ${branch} — versions are tagged when they reach main`);
+  process.exit(0);
+}
 if (git("status", "--porcelain", "--", "modules", "themes").stdout.trim()) {
   console.log("tags: modules/ or themes/ have uncommitted changes — tag after committing");
   process.exit(CHECK ? 1 : 0);

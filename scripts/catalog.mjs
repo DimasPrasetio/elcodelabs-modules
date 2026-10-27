@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 // Validates every module.json and preset.json, then writes CATALOG.md (what an AI reads to
-// pick modules) and catalog.json (what tooling reads). Zero dependencies.
+// pick modules), catalog.json (what tooling reads), and the generated snapshot in STATUS.md
+// (where the library stands). Zero dependencies.
 //
 // Usage: node scripts/catalog.mjs                       write the catalog
 //        node scripts/catalog.mjs --check               fail if a manifest or module breaks a rule,
 //                                                       or the catalog is stale
 //        node scripts/catalog.mjs --check --since <ref> also check versions and migrations against
 //                                                       <ref> (the pre-commit hook and CI do this)
+//        … --branch-work                                on a work branch: testbed-covered and
+//                                                       status-current only warn
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -14,9 +17,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkKernel, checkKernelCommits, readKernelLock } from "./lib/kernel.mjs";
 import { checkHistory, checkModules } from "./lib/rules.mjs";
+import { checkRulesDocumented, checkStatusHistory, checkTestbedCoverage, statusBlock, withStatusBlock } from "./lib/status.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CHECK = process.argv.includes("--check");
+// --branch-work (the pre-commit hook off main): a module may be committed on a branch before
+// its testbed scenario and STATUS.md entry exist — those gates only warn; the pull request's
+// check (CI) and every commit on main enforce them.
+const BRANCH_WORK = process.argv.includes("--branch-work");
 // --since given empty or as the all-zero "before" of a new branch still checks history: against
 // where this branch left main, else the previous commit.
 const SINCE = (() => {
@@ -41,48 +49,48 @@ const ids = new Set(modules.map((x) => x.id));
 for (const { id, m } of modules) {
   const at = `modules/${id}`;
   for (const f of ["id", "version", "kind", "title", "summary", "when_to_use", "when_not_to_use", "requires_kernel", "install"]) {
-    if (m[f] === undefined) problem(at, `missing "${f}"`);
+    if (m[f] === undefined) problem(at, `manifest: missing "${f}"`);
   }
-  if (m.id !== id) problem(at, `id "${m.id}" must equal the folder name`);
-  if (!/^[a-z][a-z0-9-]*$/.test(id)) problem(at, "id must be lowercase letters, digits, dashes");
-  if (!/^\d+\.\d+\.\d+$/.test(m.version ?? "")) problem(at, "version must be semver x.y.z");
-  if (!KINDS.includes(m.kind)) problem(at, `kind must be one of ${KINDS.join(", ")}`);
-  if (!existsSync(join(ROOT, at, "README.md"))) problem(at, "missing README.md");
+  if (m.id !== id) problem(at, `manifest: id "${m.id}" must equal the folder name`);
+  if (!/^[a-z][a-z0-9-]*$/.test(id)) problem(at, "manifest: id must be lowercase letters, digits, dashes");
+  if (!/^\d+\.\d+\.\d+$/.test(m.version ?? "")) problem(at, "manifest: version must be semver x.y.z");
+  if (!KINDS.includes(m.kind)) problem(at, `manifest: kind must be one of ${KINDS.join(", ")}`);
+  if (!existsSync(join(ROOT, at, "README.md"))) problem(at, "manifest: missing README.md");
   for (const folder of Object.keys(m.install ?? {})) {
-    if (!existsSync(join(ROOT, at, folder))) problem(at, `install folder "${folder}" does not exist`);
+    if (!existsSync(join(ROOT, at, folder))) problem(at, `manifest: install folder "${folder}" does not exist`);
   }
   for (const kit of m.ui ?? []) {
-    if (!ids.has(kit)) problem(at, `ui kit "${kit}" is not in the library`);
-    else if (modules.find((x) => x.id === kit).m.kind !== "ui") problem(at, `"${kit}" is not a ui kit`);
+    if (!ids.has(kit)) problem(at, `manifest: ui kit "${kit}" is not in the library`);
+    else if (modules.find((x) => x.id === kit).m.kind !== "ui") problem(at, `manifest: "${kit}" is not a ui kit`);
   }
   for (const kit of m.go_kits ?? []) {
-    if (!ids.has(kit)) problem(at, `Go kit "${kit}" is not in the library`);
-    else if (modules.find((x) => x.id === kit).m.kind !== "gokit") problem(at, `"${kit}" is not a Go kit`);
+    if (!ids.has(kit)) problem(at, `manifest: Go kit "${kit}" is not in the library`);
+    else if (modules.find((x) => x.id === kit).m.kind !== "gokit") problem(at, `manifest: "${kit}" is not a Go kit`);
   }
-  if (m.scoped !== undefined && typeof m.scoped !== "boolean") problem(at, `"scoped" must be true or false`);
-  if (m.scoped && !(m.owns_tables ?? []).length) problem(at, `"scoped": true but the module owns no tables`);
+  if (m.scoped !== undefined && typeof m.scoped !== "boolean") problem(at, `manifest: "scoped" must be true or false`);
+  if (m.scoped && !(m.owns_tables ?? []).length) problem(at, `scoped-tables: "scoped": true but the module owns no tables`);
   for (const [field, keys] of [["emits", ["name", "version", "description"]], ["listens", ["event", "subscriber", "handler"]]]) {
-    if (m[field] !== undefined && !Array.isArray(m[field])) problem(at, `"${field}" must be a list`);
-    for (const e of m[field] ?? []) for (const k of keys) if (e[k] === undefined || e[k] === "") problem(at, `${field}: an entry is missing "${k}"`);
+    if (m[field] !== undefined && !Array.isArray(m[field])) problem(at, `manifest: "${field}" must be a list`);
+    for (const e of m[field] ?? []) for (const k of keys) if (e[k] === undefined || e[k] === "") problem(at, `manifest: ${field}: an entry is missing "${k}"`);
   }
-  if ((m.emits?.length || m.listens?.length || m.scoped) && m.requires_kernel < 6) problem(at, `events and scope need kernel 6 — set "requires_kernel": 6`);
+  if ((m.emits?.length || m.listens?.length || m.scoped) && m.requires_kernel < 6) problem(at, `events-declared: events and scope need kernel 6 — set "requires_kernel": 6`);
   for (const port of m.ports ?? []) {
     for (const [provider, a] of Object.entries(port.adapters ?? {})) {
-      if (!ids.has(provider)) problem(at, `port ${port.name}: adapter for unknown module "${provider}"`);
-      if (!existsSync(join(ROOT, at, a.file))) problem(at, `port ${port.name}: adapter file ${a.file} missing`);
+      if (!ids.has(provider)) problem(at, `manifest: port ${port.name}: adapter for unknown module "${provider}"`);
+      if (!existsSync(join(ROOT, at, a.file))) problem(at, `manifest: port ${port.name}: adapter file ${a.file} missing`);
     }
   }
   for (const p of m.permissions ?? []) {
-    if (!p.name?.startsWith(`${id}.`)) problem(at, `permission "${p.name}" must be named ${id}.<action>`);
-    if (!p.description) problem(at, `permission "${p.name}" needs a description`);
+    if (!p.name?.startsWith(`${id}.`)) problem(at, `auth-through-kernel: permission "${p.name}" must be named ${id}.<action>`);
+    if (!p.description) problem(at, `auth-through-kernel: permission "${p.name}" needs a description`);
   }
   const hasApi = Boolean(m.install?.api);
-  if (hasApi !== Boolean(m.register?.go)) problem(at, "a module with api/ must have register.go, and only then");
-  if (["fullstack", "web"].includes(m.kind) && !m.register?.web) problem(at, `a ${m.kind} module needs register.web`);
-  if (m.kind === "ui" && m.register?.go) problem(at, "a ui kit has no backend registration (at most a web provider)");
+  if (hasApi !== Boolean(m.register?.go)) problem(at, "manifest: a module with api/ must have register.go, and only then");
+  if (["fullstack", "web"].includes(m.kind) && !m.register?.web) problem(at, `manifest: a ${m.kind} module needs register.web`);
+  if (m.kind === "ui" && m.register?.go) problem(at, "manifest: a ui kit has no backend registration (at most a web provider)");
   for (const line of m.register?.go?.build ?? []) {
     for (const [, name] of line.matchAll(/\{\{port:(\w+)\}\}/g)) {
-      if (!(m.ports ?? []).some((p) => p.name === name)) problem(at, `register uses undeclared port ${name}`);
+      if (!(m.ports ?? []).some((p) => p.name === name)) problem(at, `manifest: register uses undeclared port ${name}`);
     }
   }
   // A late line wires an optional port after every module is built: never one New needs.
@@ -90,12 +98,12 @@ for (const { id, m } of modules) {
   const early = new Set(goLines.flatMap((l) => [...l.matchAll(/\{\{port:(\w+)\}\}/g)].map((x) => x[1])));
   for (const line of m.register?.go?.late ?? []) {
     const names = [...line.matchAll(/\{\{port:(\w+)\}\}/g)].map((x) => x[1]);
-    if (!names.length) problem(at, `register.go.late line "${line}" wires no port — put it in "after"`);
+    if (!names.length) problem(at, `late-ports: register.go.late line "${line}" wires no port — put it in "after"`);
     for (const name of names) {
       const port = (m.ports ?? []).find((p) => p.name === name);
-      if (!port) problem(at, `register.go.late uses undeclared port ${name}`);
-      else if (port.required) problem(at, `register.go.late wires the required port ${name} — New needs it, so it goes in "build"`);
-      if (early.has(name)) problem(at, `port ${name} is wired both in the module's block and in "late"`);
+      if (!port) problem(at, `late-ports: register.go.late uses undeclared port ${name}`);
+      else if (port.required) problem(at, `late-ports: register.go.late wires the required port ${name} — New needs it, so it goes in "build"`);
+      if (early.has(name)) problem(at, `late-ports: port ${name} is wired both in the module's block and in "late"`);
     }
   }
 }
@@ -109,12 +117,21 @@ if (SINCE) {
   checkHistory(ROOT, SINCE, problem);
   checkKernelCommits(ROOT, SINCE, problem);
 }
+// Every module is installed by a testbed scenario, every rule is in AGENTS.md, and STATUS.md
+// moves with what it describes.
+// Coverage is a release gate: --check (the hook, CI) refuses; writing the catalog mid-work warns.
+const warnings = [];
+const gate = CHECK && !BRANCH_WORK ? problem : (where, msg) => warnings.push(`${where}: ${msg}`);
+checkTestbedCoverage(ROOT, modules, gate);
+checkRulesDocumented(ROOT, problem);
+if (SINCE) checkStatusHistory(ROOT, SINCE, modules, presets, gate);
+for (const w of warnings) console.warn(`warning (enforced on main) — ${w}`);
 
 for (const { id, p } of presets) {
   const at = `themes/${id}`;
-  for (const f of ["id", "version", "title", "summary", "when_to_use"]) if (p[f] === undefined) problem(at, `missing "${f}"`);
-  if (p.id !== id) problem(at, "id must equal the folder name");
-  for (const f of ["theme.css", "fonts.ts", "DESIGN.md"]) if (!existsSync(join(ROOT, at, f))) problem(at, `missing ${f}`);
+  for (const f of ["id", "version", "title", "summary", "when_to_use"]) if (p[f] === undefined) problem(at, `manifest: missing "${f}"`);
+  if (p.id !== id) problem(at, "manifest: id must equal the folder name");
+  for (const f of ["theme.css", "fonts.ts", "DESIGN.md"]) if (!existsSync(join(ROOT, at, f))) problem(at, `manifest: missing ${f}`);
 }
 
 const uniq = [...new Set(problems)];
@@ -176,8 +193,14 @@ const md = [
 ].join("\n");
 
 const json = JSON.stringify(catalog, null, 2) + "\n";
+const statusPath = join(ROOT, "STATUS.md");
+const status = withStatusBlock(existsSync(statusPath) ? readFileSync(statusPath, "utf8") : "", statusBlock(ROOT, modules, presets, pinned));
+if (status === undefined) {
+  console.error("STATUS.md: status-current: the file or its <!-- elco:status:begin/end --> markers are missing — restore them");
+  process.exit(1);
+}
 if (CHECK) {
-  const stale = [["CATALOG.md", md], ["catalog.json", json]].filter(([f, c]) => !existsSync(join(ROOT, f)) || readFileSync(join(ROOT, f), "utf8") !== c);
+  const stale = [["CATALOG.md", md], ["catalog.json", json], ["STATUS.md", status]].filter(([f, c]) => !existsSync(join(ROOT, f)) || readFileSync(join(ROOT, f), "utf8") !== c);
   if (stale.length) {
     console.error(`Stale: ${stale.map(([f]) => f).join(", ")} — run node scripts/catalog.mjs`);
     process.exit(1);
@@ -186,5 +209,6 @@ if (CHECK) {
 } else {
   writeFileSync(join(ROOT, "CATALOG.md"), md);
   writeFileSync(join(ROOT, "catalog.json"), json);
-  console.log(`Wrote CATALOG.md and catalog.json: ${catalog.modules.length} modules, ${catalog.presets.length} presets.`);
+  writeFileSync(statusPath, status);
+  console.log(`Wrote CATALOG.md, catalog.json, and STATUS.md's snapshot: ${catalog.modules.length} modules, ${catalog.presets.length} presets.`);
 }

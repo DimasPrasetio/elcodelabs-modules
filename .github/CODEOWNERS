@@ -6,6 +6,8 @@
 /.github/               @DimasPrasetio
 /.githooks/             @DimasPrasetio
 /docs/                  @DimasPrasetio
+# docs/plans/ stays owned: the maintainer's review of a plan's pull request is its approval.
+# STATUS.md is every module developer's to keep current — no code-owner review needed.
 /AGENTS.md              @DimasPrasetio
 /CLAUDE.md              @DimasPrasetio
 /.gitattributes         @DimasPrasetio

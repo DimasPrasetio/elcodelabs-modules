@@ -5,6 +5,10 @@
 > opsi B: nilai lingkup di kernel, strukturnya di modul ini — `PLAN-KERNEL-6.md` dan laporan
 > riset `Cakupan kernel 6 platform modular` di repo skill), dan daftar "Batasan yang diketahui
 > sampai modul `organization` ada" di `PLAN-KERNEL-6.md`.
+>
+> Catatan: `PLAN-KERNEL-6.md` dan laporan risetnya ada di repo skill (monorepo-elcodelabs), bukan di
+> sini. Yang dibutuhkan untuk memakai dan mengembangkan modul ini ada di README modul, `kernel/`, dan
+> STATUS.md; rencana ini adalah riwayat keputusannya.
 
 ## Tujuan dan batas
 

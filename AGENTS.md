@@ -5,6 +5,10 @@ adding or changing a module. The architecture here is **locked**: it is the arch
 the `monorepo-elcodelabs` skill, and every module must install into a project that skill
 scaffolded and fit there as if it had been written in that project.
 
+**Start with [STATUS.md](STATUS.md)** — where the library stands — and build with
+[docs/BUILDING_MODULES.md](docs/BUILDING_MODULES.md). Whatever you change, leave STATUS.md true:
+the checks below refuse a release that does not update it.
+
 **This repository is all you need.** The kernel modules build on is pinned in
 [`kernel/`](kernel/README.md): a project scaffolded by a released skill (`kernel/host/`), the
 skill's references for the kernel contract (`kernel/reference/`), and a lock with every file's
@@ -30,7 +34,10 @@ module that works around it, and never an edit under `kernel/`.
 ## Rules
 
 `node scripts/catalog.mjs --check` enforces every rule marked ✓ and names the rule in its
-message. The pre-commit hook and CI run it with `--since`, which adds the history rules.
+message (`rules-documented` keeps this table complete). `npm run check`, the pre-commit hook,
+and CI run it with `--since`, which adds the history rules — through `scripts/check.mjs`, which
+on a work branch checks the branch as one change against `main` with `testbed-covered` and
+`status-current` only warning; a pull request's check and every commit to `main` enforce them.
 
 | Rule | What it means | Checked |
 |---|---|---|
@@ -46,8 +53,10 @@ message. The pre-commit hook and CI run it with `--since`, which adds the histor
 | `own-tables-only` | Migrations and `infrastructure/queries` create, alter, read, and write only tables in `owns_tables`, and no table is owned by two modules. No foreign key or join to another module's table — relations are primitive IDs; ask the owner through a port. Data other modules point at is deactivated, never deleted. | ✓ (tables) · review (deactivate) |
 | `exact-numbers` | Migrations create no `FLOAT`, `DOUBLE`, or `REAL` column: money and quantities are `DECIMAL` (`DECIMAL(19,2)` money, `DECIMAL(19,4)` quantities, `DECIMAL(19,10)` rates — the `money` kit). A column that truly needs a float (map coordinates) ends its line with `-- float: <why>`. | ✓ |
 | `migrations` | `NNN_snake_case.up.sql` + `.down.sql`, numbered 001, 002, … without gaps. Only fullstack and backend modules have them. | ✓ |
-| `module-layout` | A module holds only `module.json`, `README.md`, and `api/ web/ shared/ migrations/ adapters/`, as its kind allows (fullstack: api+web; backend: api; web: web, optionally shared; ui: shared, optionally a web provider). | ✓ |
-| `install-targets` | `api` → `apps/api/internal/modules/<id>`, `web` → `apps/web/src/modules/<id>`, `shared` → `apps/web/src/shared`. Nothing else is written into a project except between the `elco:*` markers. | ✓ |
+| `manifest` | `module.json` / `preset.json` follow [docs/MODULE_FORMAT.md](docs/MODULE_FORMAT.md): required fields, id = folder, semver, a known kind, kits that exist, adapters declared with their files, registration matching the kind. | ✓ |
+| `module-layout` | A module holds only `module.json`, `README.md`, and `api/ web/ shared/ lib/ migrations/ adapters/`, as its kind allows (fullstack: api+web; backend: api; web: web, optionally shared; ui: shared, optionally a web provider; gokit: lib). | ✓ |
+| `install-targets` | `api` → `apps/api/internal/modules/<id>`, `web` → `apps/web/src/modules/<id>`, `shared` → `apps/web/src/shared`, `lib` → `apps/api/internal/shared/<id>`. Nothing else is written into a project except between the `elco:*` markers. | ✓ |
+| `late-ports` | A `register.go.late` line wires an optional, declared port that is not also wired in the module's block (see MODULE_FORMAT › Placeholders). | ✓ |
 | `one-owner-per-file` | No two modules install the same file. | ✓ |
 | `text-only` | Every file in a module is UTF-8 text — hashes, 3-way merges, and review depend on it. Images and fonts belong in a preset or the project. | ✓ |
 | `domain-agnostic-shared` | Code installed into `shared/` never imports a module and knows no domain (no order statuses, no user roles). | ✓ (imports) · review |
@@ -59,16 +68,20 @@ message. The pre-commit hook and CI run it with `--since`, which adds the histor
 | `version-bump` | Any change to what a module installs raises its version (patch: fix, minor: feature, major: breaking) with a line under `## Changes` in its README. | ✓ `--since` |
 | `forward-only-migrations` | A released migration is never edited or removed — projects have already applied it. Add a new one. | ✓ `--since` |
 | `released-is-forever` | A released module or preset is never deleted — projects upgrade from it. Deprecate it in its README instead. | ✓ `--since` |
-| `release-tags` | Every released version has the tag `<id>/v<version>` (the post-commit hook creates it; push with `git push --follow-tags`). A project whose recorded commit is gone upgrades from the tag. | ✓ CI on push |
+| `release-tags` | Every released version has the tag `<id>/v<version>` once it is on `main` (the post-commit hook creates it for a commit made on `main` — push with `git push --follow-tags`; CI's `tags` job creates and pushes it after a merge on GitHub). A project whose recorded commit is gone upgrades from the tag. | ✓ CI on push to `main` |
 | `pinned-kernel` | `kernel/` is exactly what `kernel/kernel.lock.json` records — no file edited, added, or removed. It changes only through `scripts/kernel-sync.mjs`. | ✓ |
 | `kernel-pinned` | A module's `requires_kernel` is at most the pinned kernel: a module builds only on a kernel it can be tested against. | ✓ |
-| `kernel-alone` | A commit that changes `kernel/` changes nothing else but the catalog it regenerates (`CATALOG.md`, `catalog.json` name the pinned kernel), so a kernel update is reviewed and reverted on its own. | ✓ `--since` |
+| `kernel-alone` | A commit that changes `kernel/` changes nothing else but the catalog it regenerates (`CATALOG.md`, `catalog.json`, and STATUS.md, which name the pinned kernel — `kernel-sync.mjs` also writes STATUS.md's log line), so a kernel update is reviewed and reverted on its own. | ✓ `--since` |
 | `adapter-requires` | An adapter's `requires` (oldest provider version it compiles against) is a released version of that provider. | ✓ |
 | `declared-go-kits` | A module (or kit) that imports a Go kit (`internal/shared/<kit>`) lists it in `go_kits`. | ✓ |
 | `gokit-pure` | A Go kit imports only the standard library, its `go_dependencies`, and other Go kits — no kernel, config, module, or environment; no tables, no wiring; never named like a kernel `shared/` package. | ✓ |
 | `tx-aware` | A module on kernel 6 builds its queries per call on `d.Tx.Conn(ctx)`, never opens a transaction itself, never uses the kernel's `DB`, and runs no SQL except through sqlc or on `d.Tx.Conn(ctx)` (or a variable holding it) — so a caller's `d.Tx` spans it. | ✓ |
 | `scoped-tables` / `scoped-queries` | A `"scoped": true` module has `company_id` in every table and in every query — in the statement's own `WHERE` (not only a subquery's), in an INSERT's columns and in what an INSERT … SELECT copies. Its primary and unique keys include `company_id` (a surrogate `id` aside), so an upsert never reaches another company's row. A system query spanning every company says `-- all companies` and is named `System…`. | ✓ |
 | `kernel-tables` | Tables named `kernel_*` belong to the kernel; no module owns them (and `own-tables-only` keeps them out of its queries). | ✓ |
+| `testbed-covered` | Every module is installed by at least one testbed scenario (directly, or as a kit of one that is). | ✓ |
+| `testbed-documented` | Every testbed scenario has a line in the header comment of `scripts/testbed.mjs` — STATUS.md lists the scenarios from there. | ✓ |
+| `rules-documented` | Every rule a check reports is in this table. | ✓ |
+| `status-current` | A change that releases a module or preset, moves the kernel, or changes the rules or the testbed's scenarios also updates the hand-written part of STATUS.md (Log; Last verified, In progress, Next, Known limits where they moved), and names each released module or preset with its version on a line it adds. Its snapshot is generated and must be current. | ✓ (`--since` for the hand-written part) |
 | `events-declared` | A module publishes only events it declares in `emits` (named `<id>.<thing>.<past-verb>`, versioned, and written at every `Publish(ctx, name, version, …)` — through whatever holds `d.Events` — as a string literal with the declared version); it subscribes only through `listens` (wired in the composition root), to events some module emits. | ✓ |
 
 The Go and SQL rules read the code as written — plainly (`d.Tx.Conn(ctx)`, `d.Events.Publish(ctx,
@@ -77,24 +90,19 @@ beside the company filter, a helper that hands out the pool) is caught in review
 
 ## Adding or changing a module
 
-1. Start from the closest existing module (`users` for a fullstack CRUD module, `ui-data` for a
-   kit) and keep its shape. Read [docs/MODULE_FORMAT.md](docs/MODULE_FORMAT.md) for `module.json`.
-2. Build the UI from the kits. If a generic piece is missing, add it to the right kit (and to
-   `ui-gallery`) in its own change.
-3. Bump the version, add a `## Changes` line to the README.
-4. `node scripts/catalog.mjs` (regenerates `CATALOG.md`), then `npm run check`.
-5. Try it: `npm run sandbox -- <id>` makes a project from the pinned kernel with your module, the
-   providers of its required ports, and the preset — then run it (`npm run dev:api`,
-   `npm run dev:web` there).
-6. `npm run testbed` (needs MySQL; see README › Working on the library). A new module is not
-   done until a testbed scenario installs it.
-7. Commit. The pre-commit hook runs the check again; the post-commit hook tags the new versions.
-   Push with `git push --follow-tags`. CI runs the check, the tags check, and the testbed.
+The whole path — decide, plan, build, test, release — is
+[docs/BUILDING_MODULES.md](docs/BUILDING_MODULES.md); its § 7 Release is the one list of release
+steps. In short: start from the closest module, build the UI from the kits (a missing generic
+piece goes into a kit and `ui-gallery`, in its own change), cover it in a testbed scenario, raise
+the version with a `## Changes` line, `npm run catalog`, update STATUS.md, run the check and the
+full testbed, commit (the post-commit hook tags releases on `main`), and
+`git push --follow-tags`.
 
 Never bypass the hook (`git commit --no-verify`) to land a rule violation. If a rule is wrong,
 change the rule in `scripts/lib/rules.mjs` and this table in the same commit, and say why.
-`kernel/`, `scripts/`, the CI, and these documents have code owners (`.github/CODEOWNERS`):
-a change to them needs the maintainer's review.
+`kernel/`, `scripts/`, the CI, these documents, and the plans have code owners
+(`.github/CODEOWNERS`, the maintainer @DimasPrasetio): a change to them — and so a new testbed
+scenario, and a plan's approval — needs the maintainer's review on the pull request.
 
 ## When a module needs more from the kernel
 
@@ -109,7 +117,7 @@ a change to them needs the maintainer's review.
    ships what the current kernel allows.
 4. The skill's maintainer decides, releases the kernel in monorepo-elcodelabs (after running this
    testbed against it), and brings it here with `npm run kernel:sync -- --skill <path>`: one
-   commit that touches only `kernel/` and the regenerated catalog. Modules may then raise
+   commit that touches only `kernel/`, the regenerated catalog, and STATUS.md. Modules may then raise
    `requires_kernel`.
 
 A kernel version only adds: modules released for kernel N keep compiling and behaving the same

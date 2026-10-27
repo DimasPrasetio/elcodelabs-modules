@@ -1,6 +1,6 @@
 # Rencana — Fondasi dokumen bisnis: kit `money` dan `docstate`, modul `numbering` dan `period`
 
-> Disusun 27 Oktober 2026. **Dibangun 27 Oktober 2026** (lihat "Hasil pembangunan"); belum di-commit. Dasar: laporan riset
+> Disusun 27 Oktober 2026. **Dibangun dan dirilis 27 Oktober 2026** (lihat "Hasil pembangunan"; commit `6dd4b8d`). Dasar: laporan riset
 > `Cakupan kernel 6 platform modular` (repo skill; catatan `frappe_odoo.md`, `go_mysql_patterns.md`,
 > `erp_hrmis_wms_indonesia.md`), kernel 6 (`d.Tx`, `d.Events`, lingkup perusahaan/cabang), modul
 > `organization` 0.1.0.

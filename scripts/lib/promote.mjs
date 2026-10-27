@@ -158,7 +158,8 @@ export function promote(libRoot, project, id, options = {}) {
 
   todo.unshift("module.json: title, summary, when_to_use, when_not_to_use, port and env descriptions");
   todo.push("README.md", "remove anything specific to the project it came from (names, copy, business rules)",
-    "a testbed scenario that installs and exercises it", "node scripts/catalog.mjs");
+    "a testbed scenario that installs and exercises it (until then --check refuses it: testbed-covered)",
+    "node scripts/catalog.mjs, then a STATUS.md Log entry (docs/BUILDING_MODULES.md › Release)");
   return { id, path: target, files: apiFiles.length + webFiles.length, migrations: migs.length, manifest, todo };
 }
 

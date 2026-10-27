@@ -3,7 +3,7 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: ["**"]   # every branch, no tags: the release tags are pushed by the tags job
   workflow_dispatch:
 
 permissions:
@@ -19,14 +19,41 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # Architecture rules, plus version bumps and forward-only migrations against the base.
-      - run: node scripts/catalog.mjs --check --since "${{ github.event.pull_request.base.sha || github.event.before }}"
-      # Every released version has its <id>/v<version> tag (projects fall back to it when the
-      # commit they installed from is gone). Pushed with git push --follow-tags.
-      - if: github.event_name == 'push'
-        run: node scripts/tags.mjs --check
+      # A pull request: everything enforced, against its base — the gate before a release.
+      - if: github.event_name == 'pull_request'
+        run: node scripts/catalog.mjs --check --since "${{ github.event.pull_request.base.sha }}"
+      # A push to main: everything enforced, against what main was.
+      - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: node scripts/catalog.mjs --check --since "${{ github.event.before }}"
+      # A push to a work branch: the branch as one change against main, gates only warn.
+      - if: github.event_name != 'pull_request' && github.ref != 'refs/heads/main'
+        run: node scripts/check.mjs
+
+  # Every released version gets its <id>/v<version> tag once it is on main — also when the pull
+  # request was merged on GitHub, where no local hook runs. (Tags pushed with GITHUB_TOKEN start
+  # no new workflow run.)
+  tags:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: catalog
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          node scripts/tags.mjs
+          git push origin --tags
+          node scripts/tags.mjs --check
 
   testbed:
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:

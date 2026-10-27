@@ -238,7 +238,7 @@ export function checkModules(root, modules, problem) {
     }
     for (const [folder, target] of Object.entries(m.install ?? {})) {
       const want = INSTALL_TARGET[folder];
-      if (!want) problem(at, `install-targets: "${folder}" cannot be installed — only api, web, shared`);
+      if (!want) problem(at, `install-targets: "${folder}" cannot be installed — only api, web, shared, lib`);
       else if (target !== want(id)) problem(at, `install-targets: ${folder} must install to ${want(id)}, not ${target}`);
     }
     for (const f of ["api", "web", "shared", "lib"]) {

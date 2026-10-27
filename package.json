@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "catalog": "node scripts/catalog.mjs",
-    "check": "node scripts/catalog.mjs --check --since HEAD",
+    "check": "node scripts/check.mjs",
     "testbed": "node scripts/testbed.mjs",
     "sandbox": "node scripts/sandbox.mjs",
     "kernel:sync": "node scripts/kernel-sync.mjs"

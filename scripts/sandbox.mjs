@@ -11,11 +11,14 @@
 //   --fresh      replace an existing sandbox at that path
 //   --no-setup   skip npm install, go mod tidy, and sqlc generate
 //
-// Then: set DB_* in <dir>/.env, npm run migrate:up, npm run dev:api and npm run dev:web.
-// After changing a module, make a fresh sandbox (or use the installed copy's module.mjs upgrade).
+// Then: create a database, set DB_DSN (and USERS_BOOTSTRAP_EMAIL/PASSWORD when users is in) in
+// <dir>/.env, npm run migrate:up, npm run dev:api and npm run dev:web. To sign in and see pages,
+// include app-shell users auth (and rbac) — see docs/BUILDING_MODULES.md › Test it.
+// After changing a module, make the sandbox again with --fresh: upgrade cannot base a merge on a
+// module that was never committed.
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyPreset, installModule, libraryIndex, loadManifest, missingKits, readLock } from "./lib/install.mjs";
@@ -45,7 +48,9 @@ for (let i = 0; i < argv.length; i++) {
   else opts.ids.push(a);
 }
 if (opts.help || !opts.ids.length) {
-  process.stdout.write(spawnSync("sed", ["-n", "2,16p", fileURLToPath(import.meta.url)], { encoding: "utf8" }).stdout.replace(/^\/\/ ?/gm, ""));
+  // The header comment, up to the first line that is not one.
+  const header = readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(1);
+  process.stdout.write(header.slice(0, header.findIndex((l) => !l.startsWith("//"))).map((l) => l.replace(/^\/\/ ?/, "")).join("\n") + "\n");
   process.exit(opts.help ? 0 : 1);
 }
 

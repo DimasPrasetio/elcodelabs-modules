@@ -50,8 +50,9 @@ architecture; the kernel contract a module builds on is pinned, read-only, in
   ],
   "ui": ["ui-core"],                  // ui kits its frontend is built on
   "go_kits": ["money"],               // Go kits its backend imports (internal/shared/<kit>)
-  "permissions": [                    // what it declares with d.Authz.Declare — <id>.<action>
-    { "name": "users.manage", "description": "Add, edit, deactivate, and delete users" }
+  "permissions": [                    // what it declares with d.Authz.Declare — <id>.<action>;
+                                      // descriptions in Indonesian (users read them)
+    { "name": "users.manage", "description": "Menambah, mengubah, dan menonaktifkan pengguna" }
   ],
 
   "owns_tables": ["users"],

@@ -3,15 +3,15 @@
 // monorepo-elcodelabs exactly as committed at a release tag (never from a working tree), and
 // writes it to kernel/host — with the kernel references (kernel/reference), a README, and
 // kernel/kernel.lock.json. For whoever maintains the skill; module
-// developers never run it. Commit the result by itself, with the catalog it regenerates (the
-// catalog check refuses a commit that mixes kernel/ with anything but that catalog), after the
-// testbed passes on it.
+// developers never run it. Commit the result by itself, with the catalog it regenerates and the
+// STATUS.md log line it writes (the catalog check refuses a commit that mixes kernel/ with
+// anything else), after the testbed passes on it.
 //
 // Usage: node scripts/kernel-sync.mjs --skill <monorepo-elcodelabs folder in a git clone> [--ref <tag|commit>]
 //   --ref defaults to the newest <folder>/kernel/v<N>.<R> release tag in that clone.
 
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -84,12 +84,23 @@ try {
   };
   writeFileSync(join(ROOT, LOCK_FILE), JSON.stringify(lock, null, 2) + "\n");
 
+  // STATUS.md's log records the sync (status-current asks for it); the snapshot follows with
+  // node scripts/catalog.mjs.
+  const statusFile = join(ROOT, "STATUS.md");
+  if (existsSync(statusFile)) {
+    const status = readFileSync(statusFile, "utf8");
+    const at = status.indexOf("\n- **", status.indexOf("## Log"));
+    const day = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    const line = `\n- **${day} — kernel ${kernel}.** Pinned from \`${tag ?? ref}\` (${commit.slice(0, 7)})${before && before.kernel !== kernel ? `; modules may set \`requires_kernel\` ${kernel}` : ""}.`;
+    if (at >= 0) writeFileSync(statusFile, status.slice(0, at) + line + status.slice(at));
+  }
+
   const changed = before ? Object.keys({ ...before.files, ...lock.files }).filter((f) => before.files[f] !== lock.files[f]).length : files.length;
   process.stdout.write(`✓ kernel ${kernel} pinned from ${tag ?? ref} (${commit.slice(0, 7)}): ${files.length} files, ${changed} changed\n`);
   if (!tag) process.stdout.write(`  ! ${commit.slice(0, 7)} has no ${tagBase}${kernel}.<R> tag — commit in the skill (its post-commit hook tags releases) and sync again before committing\n`);
   if (before && before.kernel !== kernel) process.stdout.write(`  kernel ${before.kernel} → ${kernel}: modules may now set requires_kernel ${kernel}\n`);
   process.stdout.write(`\nNext:\n  npm run testbed\n  node scripts/catalog.mjs
-  git add kernel CATALOG.md catalog.json && git commit -m "kernel: ${kernel} dari ${tag ?? commit.slice(0, 7)}"   # kernel/ and its catalog only\n`);
+  git add kernel CATALOG.md catalog.json STATUS.md && git commit -m "kernel: ${kernel} dari ${tag ?? commit.slice(0, 7)}"   # kernel/, its catalog, and STATUS.md only\n`);
 } finally {
   rmSync(work, { recursive: true, force: true });
 }

@@ -1,4 +1,6 @@
 #!/bin/sh
 # Refuses a commit that breaks the library's architecture (rules: AGENTS.md).
 # Enable once per clone: git config core.hooksPath .githooks
-exec node scripts/catalog.mjs --check --since HEAD
+# On main every commit is a release; on a work branch the branch is one release in the making
+# (scripts/check.mjs says how each is checked).
+exec node scripts/check.mjs --staged

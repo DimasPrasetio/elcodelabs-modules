@@ -1,23 +1,39 @@
 #!/usr/bin/env node
 // Testbed — proves the library's modules install into a fresh project and work.
 //
-// Eight scenarios, each in its own fresh project: a copy of the pinned kernel host (kernel/host,
+// The scenarios, each in its own fresh project: a copy of the pinned kernel host (kernel/host,
 // scaffolded by a released monorepo-elcodelabs — see kernel/README.md), so nothing outside this
 // repository is needed:
-//   full        preset bingkai-navy + ui-core + app-shell + users + auth + rbac (ports ← users)
+//   full        preset + the four ui kits + every base module, all ports wired, against MySQL and
+//               an SMTP sink: sign-in and its limits, users and own profile, sessions ended by
+//               sign-out / deactivation / password change, cross-site and non-JSON writes
+//               refused, roles and permissions (no escalation, administrators protected), forgot
+//               password by email, the outbox, a logo streamed into files (SVG and disguised HTML
+//               refused), the audit trail, two API processes delivering each email exactly once
 //   no-rbac     users + auth without rbac: the kernel's default "signed in = allowed"
-//   auth-alone  ui-core + auth, UserStore ← an adapter the project wrote itself (no users module)
-//   users-alone ui-core + users, no auth provider (guarded routes must refuse)
-//   lifecycle   the module.mjs CLI: add, status, upgrade (clean merge + conflict), detach, promote
-//   kernel6     fixture modules: one d.Tx across modules, durable events, scope, a Go kit, schedules
+//   auth-alone  auth on a UserStore the project wrote itself — no users module, no mailer: the
+//               password features report themselves off and the optional ports are nil
+//   users-alone users without any auth provider: its guarded routes refuse (401)
+//   lifecycle   the module.mjs CLI on a throwaway library copy: add (and a refused add), status,
+//               upgrade merging both sides, a conflicting upgrade, detach, a port wired later,
+//               remove, release-tag fallback, promote (refused for a rule breach), the library's
+//               own documents (status-current, a stale STATUS.md snapshot, rules-documented,
+//               testbed-covered, work branches warned and never tagged), and the pinned kernel
+//               guards (an edit, a too-new module, a mixed kernel commit refused)
+//   kernel6     fixture modules against MySQL: one d.Tx across modules joined by a port, an event
+//               delivered once across two containers, companies kept apart, a missed calendar
+//               tick caught up once; the rules refusing scope, transaction, and event breaches
 //   organization every module + organization added later, its late ports wired with module.mjs:
-//               several companies and branches against MySQL
+//               several companies and branches against MySQL — isolation, refusals, branch
+//               heads, deactivation, recovery, public routes and jobs without panic
 //   documents   money, docstate, numbering, period through a fixture invoice module: exact
-//               amounts, gapless numbers from two containers at once, closing the books
+//               amounts, gapless numbers from two containers at once, a rollback giving its
+//               number back, closing and reopening the books, a lock moved mid-posting,
+//               revisions, company isolation; the exact-numbers rule
 // Each: install → npm install → go mod tidy → sqlc generate → gofmt → go vet → go test →
 // build:web → build:api → run the binary and call the API.
 //
-// The API checks of full and no-rbac need MySQL: set TESTBED_DB_DSN to a server DSN without a
+// The API checks need MySQL: set TESTBED_DB_DSN to a server DSN without a
 // database (e.g. "root:@tcp(localhost:3306)/"). A throwaway database is created (mysql client),
 // migrated with npm run migrate:up (golang-migrate, installed into .testbed/bin), and dropped.
 // Without it those checks are skipped — and reported.
@@ -48,9 +64,10 @@ const KEEP = argv.includes("--keep");
 const DB_DSN = process.env.TESTBED_DB_DSN;
 
 let failures = 0;
+let passes = 0;
 const skipped = [];
 const log = (m) => process.stdout.write(m + "\n");
-const pass = (m) => log(`  ✓ ${m}`);
+const pass = (m) => { passes++; log(`  ✓ ${m}`); };
 const fail = (m) => { log(`  ✗ ${m}`); failures++; };
 const skip = (m) => { log(`  ⚠ SKIPPED: ${m}`); skipped.push(m); };
 
@@ -92,6 +109,12 @@ function build(dir) {
     && run("go", ["test", "./..."], api, `go test ./... (module unit tests, ports faked${DB_DSN ? "; kernel MySQL tests" : ""})`, DB_DSN ? { KERNEL_TEST_DSN: DB_DSN } : undefined)
     && run("npm", ["run", "build:web"], dir, "build:web (tsc + vite)")
     && run("npm", ["run", "build:api"], dir, "build:api");
+}
+
+/** A working copy of the library — everything its checks read — for a scenario to change. */
+function copyLibrary(lib) {
+  for (const p of ["modules", "themes", "scripts", "docs", "kernel", "testbed"]) cpSync(join(LIB, p), join(lib, p), { recursive: true });
+  for (const f of [".gitignore", ".gitattributes", "AGENTS.md", "STATUS.md", "CATALOG.md", "catalog.json"]) cpSync(join(LIB, f), join(lib, f));
 }
 
 /** Installs id after the ui kits it needs — what module.mjs add does. */
@@ -651,8 +674,7 @@ async function kernel6() {
   let api;
   let api2;
   try {
-    for (const p of ["modules", "themes", "scripts", "docs", "kernel"]) cpSync(join(LIB, p), join(lib, p), { recursive: true });
-    for (const f of [".gitignore", ".gitattributes"]) cpSync(join(LIB, f), join(lib, f));
+    copyLibrary(lib);
     for (const id of ["fixkit", "org6", "ledger", "orders"]) cpSync(join(LIB, "testbed/fixtures/kernel6", id), join(lib, "modules", id), { recursive: true });
     g("init", "-q", "-b", "main");
     g("add", "-A");
@@ -794,8 +816,7 @@ async function lifecycle() {
   };
   const bump = (version) => edit(join(lib, "modules/users/module.json"), /"version": "[^"]+"/.exec(readFileSync(join(lib, "modules/users/module.json"), "utf8"))[0], `"version": "${version}"`);
   try {
-    for (const p of ["modules", "themes", "scripts", "docs", "kernel"]) cpSync(join(LIB, p), join(lib, p), { recursive: true });
-    for (const f of [".gitignore", ".gitattributes"]) cpSync(join(LIB, f), join(lib, f));
+    copyLibrary(lib);
     writeFileSync(join(lib, "modules/ui-core/shared/.DS_Store"), "finder junk"); // ignored by git
     g("init", "-q", "-b", "main");
     g("add", "-A");
@@ -945,10 +966,66 @@ async function lifecycle() {
     expect("promote refuses a module that breaks an architecture rule, leaving the library untouched",
       r.status === 1 && r.stderr.includes("semantic-colors") && !existsSync(join(lib, "modules/banner")), r.stderr);
 
-    // The pinned kernel: read-only from the library's side.
+    // A promoted module waits for its testbed scenario: --check (the hook) refuses it until then.
+    let gate = spawnSync(process.execPath, [join(lib, "scripts/catalog.mjs"), "--check"], { cwd: lib, encoding: "utf8" });
+    expect("…but cannot be committed before a testbed scenario installs it (testbed-covered)", gate.status === 1 && gate.stderr.includes("testbed-covered") && gate.stderr.includes("dashboard"), gate.stderr);
+    rmSync(join(lib, "modules/dashboard"), { recursive: true, force: true });
+    spawnSync(process.execPath, [join(lib, "scripts/catalog.mjs")], { cwd: lib, encoding: "utf8" });
+
     g("add", "-A");
-    g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "promoted");
+    g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "promoted, then withdrawn");
     const check = () => spawnSync(process.execPath, [join(lib, "scripts/catalog.mjs"), "--check", "--since", "HEAD"], { cwd: lib, encoding: "utf8" });
+
+    // The library's own documents move with it.
+    expect("the library copy passes its checks", check().status === 0, check().stderr);
+    const statusFile = join(lib, "STATUS.md");
+    const statusSrc = readFileSync(statusFile, "utf8");
+    const usersReadme = join(lib, "modules/users/README.md");
+    bump("9.0.0");
+    edit(usersReadme, "## Changes\n", "## Changes\n\n- **9.0.0** — testbed.\n");
+    spawnSync(process.execPath, [join(lib, "scripts/catalog.mjs")], { cwd: lib, encoding: "utf8" });
+    r = check();
+    expect("a release without a STATUS.md entry is refused (status-current)", r.status === 1 && r.stderr.includes("status-current") && r.stderr.includes("users is now 9.0.0"), r.stderr);
+    edit(statusFile, "## Log\n", "## Log\n\n- **today — something else.** testbed.\n");
+    r = check();
+    expect("…and still is when STATUS.md changed but does not name users 9.0.0", r.status === 1 && r.stderr.includes("users 9.0.0 released without a new line"), r.stderr);
+    edit(statusFile, "something else", "users 9.0.0");
+    r = check();
+    expect("…and passes once STATUS.md names it with its version", r.status === 0, r.stderr);
+    writeFileSync(statusFile, readFileSync(statusFile, "utf8").replace("| 9.0.0 |", "| 9.9.9 |"));
+    r = check();
+    expect("a hand-edited snapshot in STATUS.md is refused (stale)", r.status === 1 && r.stderr.includes("Stale: STATUS.md"), r.stderr);
+    g("checkout", "--", "modules/users", "STATUS.md", "CATALOG.md", "catalog.json");
+    const agentsFile = join(lib, "AGENTS.md");
+    const agentsSrc = readFileSync(agentsFile, "utf8");
+    writeFileSync(agentsFile, agentsSrc.split("\n").filter((l) => !l.startsWith("| `exact-numbers` |")).join("\n"));
+    r = check();
+    expect("a rule missing from AGENTS.md's table is refused (rules-documented)", r.status === 1 && r.stderr.includes("rules-documented") && r.stderr.includes("exact-numbers"), r.stderr);
+    writeFileSync(agentsFile, agentsSrc);
+    expect("restored, the copy passes again", check().status === 0 && readFileSync(statusFile, "utf8") === statusSrc);
+
+    // A work branch: one change against main, coverage and status only warn, nothing tagged.
+    g("switch", "-q", "-c", "work");
+    cpSync(join(lib, "modules/money"), join(lib, "modules/wip-kit"), { recursive: true });
+    const wipManifest = join(lib, "modules/wip-kit/module.json");
+    writeFileSync(wipManifest, readFileSync(wipManifest, "utf8").replace('"id": "money"', '"id": "wip-kit"').replace("internal/shared/money", "internal/shared/wip-kit").replace(/"version": "[^"]+"/, '"version": "0.1.0"'));
+    for (const f of readdirSync(join(lib, "modules/wip-kit/lib"))) {
+      const file = join(lib, "modules/wip-kit/lib", f);
+      writeFileSync(file, readFileSync(file, "utf8").replace(/^package money\b/m, "package wipkit"));
+    }
+    spawnSync(process.execPath, [join(lib, "scripts/catalog.mjs")], { cwd: lib, encoding: "utf8" });
+    const branchCheck = (...a) => spawnSync(process.execPath, [join(lib, "scripts/catalog.mjs"), "--check", "--since", "main", ...a], { cwd: lib, encoding: "utf8" });
+    r = branchCheck("--branch-work");
+    expect("on a work branch a module without its scenario and STATUS.md line is committed with warnings", r.status === 0 && r.stderr.includes("testbed-covered") && r.stderr.includes("status-current"), r.stderr);
+    r = branchCheck();
+    expect("…which its pull request's check (without --branch-work) refuses", r.status === 1 && r.stderr.includes("testbed-covered"), r.stderr);
+    g("add", "-A");
+    g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "wip");
+    r = spawnSync(process.execPath, [join(lib, "scripts/tags.mjs")], { cwd: lib, encoding: "utf8" });
+    expect("…and nothing is tagged off main", r.status === 0 && !g("tag", "-l", "wip-kit/*").stdout.trim(), r.stdout);
+    g("switch", "-q", "main");
+
+    // The pinned kernel: read-only from the library's side.
     const kernelGo = join(lib, "kernel/host/apps/api/internal/kernel/kernel.go");
     const kernelSrc = readFileSync(kernelGo, "utf8");
     writeFileSync(kernelGo, kernelSrc + "\n// a module developer's edit\n");
@@ -972,11 +1049,12 @@ async function lifecycle() {
     kernelLock.files["README.md"] = createHash("sha256").update(readme).digest("hex");
     writeFileSync(kernelLockFile, JSON.stringify(kernelLock, null, 2) + "\n");
     edit(join(lib, "modules/users/README.md"), "#", "# ");
+    edit(join(lib, "STATUS.md"), "## Log\n", "## Log\n\n- **today — kernel synced again.**\n");
     r = check();
     expect("a kernel update mixed with a module change is refused (kernel-alone)", r.status === 1 && r.stderr.includes("kernel-alone") && !r.stderr.includes("pinned-kernel"), r.stderr);
     g("checkout", "--", "modules/users/README.md");
     r = check();
-    expect("the same kernel update on its own passes", r.status === 0, r.stderr);
+    expect("the same kernel update on its own, with its STATUS.md log line, passes", r.status === 0, r.stderr);
   } catch (err) {
     fail(`lifecycle: ${err.message}`);
   } finally {
@@ -1019,8 +1097,7 @@ async function organization() {
   const cli = (...a) => spawnSync(process.execPath, [join(lib, "scripts/module.mjs"), ...a, "--project", dir], { encoding: "utf8" });
   let api;
   try {
-    for (const p of ["modules", "themes", "scripts", "docs", "kernel"]) cpSync(join(LIB, p), join(lib, p), { recursive: true });
-    for (const f of [".gitignore", ".gitattributes"]) cpSync(join(LIB, f), join(lib, f));
+    copyLibrary(lib);
     g("init", "-q", "-b", "main");
     g("add", "-A");
     g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "library");
@@ -1242,8 +1319,7 @@ async function documents() {
   let api;
   let api2;
   try {
-    for (const p of ["modules", "themes", "scripts", "docs", "kernel"]) cpSync(join(LIB, p), join(lib, p), { recursive: true });
-    for (const f of [".gitignore", ".gitattributes"]) cpSync(join(LIB, f), join(lib, f));
+    copyLibrary(lib);
     cpSync(join(LIB, "testbed/fixtures/documents/fixinvoice"), join(lib, "modules/fixinvoice"), { recursive: true });
     g("init", "-q", "-b", "main");
     g("add", "-A");
@@ -1496,7 +1572,8 @@ for (const [name, fn] of Object.entries(scenarios)) {
 log("\n=== Summary ===");
 for (const s of skipped) log(`  ⚠ skipped: ${s}`);
 if (failures) {
-  log(`FAILED: ${failures} check(s).`);
+  log(`FAILED: ${failures} check(s); ${passes} passed.`);
   process.exit(1);
 }
-log("All testbed checks passed.");
+// The line STATUS.md › Last verified records — with what was skipped, if anything.
+log(`All testbed checks passed: ${passes} checks${ONLY ? ` (only ${ONLY})` : ""}${skipped.length ? `, ${skipped.length} skipped — not a full run` : ""}.`);
